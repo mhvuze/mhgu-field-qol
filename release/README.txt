@@ -13,9 +13,19 @@ Only tested on MHGU Recomp, with the English game text.
 
 Install
 -------
-Put this "field-qol" folder in the recomp's "mods" folder:
-  - macOS: ~/Library/Application Support/MHGURecomp/mods/
-  - Windows and Linux: the "mods" folder next to the recomp's executable
+1. Put this "field-qol" folder in the recomp's "mods" folder:
+     - macOS: ~/Library/Application Support/MHGURecomp/mods/
+     - Windows and Linux: the "mods" folder next to the recomp's executable
+   Gathering and delivering work right away.
+
+2. For "Send all to Item Box & Exit", run the layout tool once. It makes the
+   reward screen's new menu row from your own game files (the mod can't ship
+   them), and needs Python 3 (python.org; macOS and Linux usually have it).
+   Open a terminal in the "field-qol" folder and run:
+     - macOS and Linux: python3 tools/make_arcs.py
+     - Windows:         py tools\make_arcs.py
+   It writes romfs/nativeNX/eng/arc/result_eng.arc and village/common_eng.arc
+   into this folder.
 
 Settings
 --------

@@ -1,6 +1,9 @@
 """Builds the mod's reward screen archives from your own game files (the repository holds no game data).
 
-usage: python3 -I tools/make_arcs.py <recomp folder> [mod folder]
+usage: python3 -I tools/make_arcs.py [recomp folder] [mod folder]
+
+Run from the installed mod (mods/field-qol/tools/make_arcs.py), it needs no arguments: the mod folder is the one
+holding tools/, and the recomp folder the one holding mods/. The game files are read from <recomp folder>/data.
 
 The reward screen's menu (eng\\GUI\\01_quest\\result\\reward) gets a fourth row under "Send to the Item Box" for the
 plugin's "Send all to Item Box & Exit": a copy of the third row one row lower, a second separator line one row lower, a
@@ -67,6 +70,9 @@ def patch_arc(arc, lang):
 
 def main(recomp, mod):
     native = os.path.join(recomp, 'data', 'romfs', 'nativeNX')
+    if not os.path.isdir(native):
+        sys.exit('The game files were not found in %s. Pass the recomp folder (the one holding data/ and mods/): '
+                 'python3 tools/make_arcs.py <recomp folder>' % os.path.join(recomp, 'data'))
     for lang in LANGS:
         for rel in ARCS:
             rel = rel % lang
@@ -82,5 +88,7 @@ def main(recomp, mod):
 
 
 if __name__ == '__main__':
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else here)
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the mod folder (holding tools/)
+    recomp = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(here))  # (mods/field-qol/..)
+    main(recomp, sys.argv[2] if len(sys.argv) > 2 else here)
+    print('Done: start the game and the reward screen has "Send all to Item Box & Exit".')
