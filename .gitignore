@@ -1,0 +1,6 @@
+out/
+dist/
+__pycache__/
+# game data: made from your own files by tools/make_arcs.py, never committed
+*.arc
+.DS_Store
