@@ -8,12 +8,19 @@ Quality-of-life changes for quests in **Monster Hunter Generations Ultimate**, a
 ## Features
 
 **Gather a whole spot with one press.** At a mining, bone, bug, herb or mushroom spot, one press gathers everything
-the spot has left. Each item gets its own roll as usual, and skills and early breaks work the same. It stops:
+the spot has left. Carving works the same way: one press takes all of a carcass's carves. Each item gets its own roll
+as usual, and skills and early breaks work the same. It stops:
 
 - before eggs, powderstone and other items you carry in your hands: those still take a press each;
-- when your pouch is full or an item is at its stack limit.
+- when you carve Gypceros while it plays dead: you get one carve, as usual, before it gets up.
 
-Instead of one message per gather, you get one message per item with the total (`Iron Ore x3`).
+A full pouch doesn't stop it: every gather is still rolled, and the pouch takes what fits (items you already have
+stack as usual). Items at their stack limit are lost, as in the game. For items that need a free slot, the game's
+"Item Pouch is full" window opens once the spot is done, one item after the other, so you choose what to replace in
+one go instead of after every press.
+
+All of a spot's messages come in one notification, with one line per item and its total (`Iron Ore x3`). A spot with
+more than 6 lines continues in a second notification.
 
 **Deliver from anywhere.** The Item Pouch's **Deliver** and **Clear out Account Items** work anywhere on the map, not
 only in the base camp. Which items can be delivered doesn't change: the quest's target items and account items, but

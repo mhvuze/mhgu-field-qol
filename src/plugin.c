@@ -24,9 +24,17 @@
 #define IS_LOCAL 0x27BCD0         // uPlayer: is this the hunter played on this console
 #define POP_USE 0x31B228          // sPop: use up one gather (spop, id, &pop) -> 1: more left, 2: that was the last
 #define POP_CAN_GATHER 0x319244   // cPop: has a gather left and isn't going away
+#define POP_ENEMY 0x319588        // cPop: the monster it belongs to, else 0 (most carcasses don't say)
+#define EM009_SET_ACTION 0xD565F8 // uEm009_00 (Gypceros), vtable +0x204: start an action (gypceros, kind, action)
 #define POP_ITEM 0x319318         // cPop: roll its next item (pop, &item, &quantity) -> 1
 #define IS_CARRIED 0x1943BC       // sItem: is the item carried in the hands (items, item)
 #define MESSAGE 0x65DE34          // add a line to the quest's message log (kind, message, item, quantity, 0)
+#define MSG_BEGIN 0x65DCE4        // the log's next lines go in one notification box...
+#define MSG_END 0x65DD24          // ...which this shows
+#define POUCH_PROMPT 0x670500     // open the "Item Pouch is full" window for an item to take (item, quantity)
+#define PROMPT_OPEN 0x670584      // is that window open
+#define PROMPT_ITEM 0x6705C0      // the window's item to take (u16 item, u16 quantity), 0 without the window; the byte
+                                  // 8 before it is set while an item waits for the window to open
 #define GOT_SPOP 0x1838D94        // the game's sPop (gathering spots)
 #define GOT_ITEMS 0x1838BD0       // the game's sItem (item data)
 
@@ -65,6 +73,11 @@
 #define POP_ID 0x4C               // (u16) the spot's id
 #define POP_LEFT 0x4E             // (u16) gathers left
 #define LEFT_UNLIMITED 0xFFFF
+// uEnemy, a spot's monster
+#define ENEMY_CARVE_STATE 0x338   // (vtable) how a carve affects it: 0 not at all (a carcass); 1 it is told, 2 refused
+#define EM009_DATA 0xCAC0         // uEm009_00: its own data...
+#define EM009_DEAD_POP 0x4C       // ...(s32) the id of its playing-dead carve spot, -1: none
+#define MAX_PLAYING_DEAD 8        // the Gypceros remembered at once
 // the hunter
 #define HUNTER_STATE 0x2500
 #define STATE_CARRYING 0x10       // set while carrying something in the hands
@@ -72,7 +85,9 @@
 #define HUNTER_POP_ID 0x32AE      // (s16) the id of the spot being gathered
 // the pouch's answers
 #define ADD_NONE 0xFFFFFFFF       // (the plugin's own: no answer seen)
-#define ADD_TAKEN_MAX 2           // 0-2: the pouch took it; more: refused (full, at the stack limit)
+#define ADD_TAKEN_MAX 2           // 0-2: the pouch took it (2: some of it, the item reached its limit)
+#define ADD_AT_LIMIT 3            // not taken: the item is at its limit ("can't carry any more")
+#define ADD_NO_ROOM 5             // not taken: no free slot; the pouch opens the replace window (POUCH_PROMPT)
 // the message log
 #define MSG_OBTAINED 9            // kind 0, message 9: "<item> xN"
 
@@ -109,6 +124,10 @@
 
 #define MAX_EXTRA 64              // the most extra gathers per press (spots have a handful)
 #define MAX_QUEUED 24             // the most messages held back per press
+#define BOX_LINES 6               // the lines a notification box takes
+#define MAX_LEFT 16               // the items waiting for the replace window
+#define PROMPT_TRIES 600          // frames without a replace window before the waiting items are dropped (about 10 s)
+#define PROMPT_PENDING 8          // (PROMPT_ITEM - 8: an item waits for the window)
 #define MAX_SOUNDS 4              // the most distinct sounds remembered during one Send all
 
 typedef u32 (*Gather)(u32 hunter, u32 empty_if_none, u32 notify);
@@ -120,6 +139,7 @@ typedef u32 (*PopItem)(u32 pop, u16 *item, u8 *quantity);
 typedef u32 (*IsCarried)(u32 items, u32 item);
 typedef u32 (*Message)(u32 kind, u32 id, u32 item, u32 quantity, u32 extra);
 typedef u32 (*Query)(void);
+typedef u32 (*Prompt)(u32 item, u32 quantity);
 typedef u32 (*Deliverable)(u32 slot, u32 item);
 typedef u32 (*Section)(u32 ui, u32 section);
 typedef u32 (*Component)(u32 ui, u32 index);
@@ -130,6 +150,7 @@ typedef u32 (*Sound)(u32 kind, u32 id);
 typedef void (*Rows)(u32 uio, u32 list, u32 flag);
 typedef void (*Looks)(u32 uio, u32 enabled, u32 row);
 typedef void (*Method)(u32 self);
+typedef u32 (*Method4)(u32 self, u32 a1, u32 a2, u32 a3);
 typedef void (*SetText)(u32 uio, u32 inst, u32 obj, const char *text);
 typedef void (*SetInt)(u32 uio, u32 inst, u32 obj, u32 v);
 typedef u32 (*Look)(u32 enabled, u32 selected, u32 a, u32 b);
@@ -146,13 +167,14 @@ static u32 g_main; // the game's main module
 // A hook's trampoline to the original function
 #define ORIGINAL(type, hook) ((type)(hook).original)
 
-static ForgeHook g_gather_hook, g_add_hook, g_add_quest_hook, g_message_hook;
+static ForgeHook g_gather_hook, g_add_hook, g_add_quest_hook, g_message_hook, g_play_dead_hook, g_prompt_hook;
 static ForgeHook g_deliverable_hook, g_clear_account_hook;
 static ForgeHook g_section_hook, g_rows_hook, g_looks_hook, g_reward_update_hook, g_sound_hook;
 static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 
 // The switches in Forge's menu
-static bool g_gather_all = true, g_merge = true, g_deliver_anywhere = true, g_send_all = true;
+static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true;
+static bool g_deliver_anywhere = true, g_send_all = true;
 
 // The compiler may emit memset calls; there is no C library to provide one
 void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; return d; }
@@ -163,19 +185,36 @@ void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; retur
 // faces (POP_USE), takes the spot's item (POP_ITEM: a fixed item, or a roll of the spot's table) and gives it to the
 // hunter (GIVE: skill bonuses, the pouch, the "obtained" message, or the carry motion for eggs and the like).
 //
+// Carving uses the same spots: a carcass's carves are a spot's gathers (made from the monster's carve table), so they
+// are taken at once too.
+//
 // The plugin hooks GATHER. After a gather that put an item in the pouch, it repeats those three steps until the spot
-// is used up, following the same rules as pressing the button again. It stops:
+// is used up, following the same rules as pressing the button again. It stops at the carve spots of a living monster,
+// where the carves are meant to be limited by the monster getting up, not by the spot's count:
+//   - Gypceros playing dead (uEm009_00): starting that action (its vtable +0x204, EM009_SET_ACTION) makes a spot from
+//     its carve table, which it keeps at its data +0x4C and removes when it gets up. Nothing tells it about carves; it
+//     gets up when the action ends, so in the game there is time for about one carve. Taken at once, every carve of
+//     the spot came out, each time it played dead. The plugin notes the spot when the action starts;
+//   - a spot that belongs to a monster that is told about carves (POP_ENEMY, and its uEnemy virtual 0x338 isn't 0):
+//     the hunter's carve tells the monster, which may end the spot. Only uEm056_00 has one, made while it is alive;
 //   - at a spot with an unlimited count (it would never run out);
 //   - before an item carried in the hands (eggs, powderstone...): that gather isn't used, so the next press gathers
 //     it as usual; likewise when the hunter is already carrying something;
-//   - when the pouch refuses an item (full, at the stack limit);
 //   - when the spot runs out or breaks early (sPop's own count and early-break roll).
+// A full pouch doesn't stop it: every gather is rolled, the pouch takes what it can (an item it holds already stacks),
+// an item at its limit is lost as in the game ("can't carry any more"), and an item with no free slot waits. The game
+// would open the replace window for it (POUCH_PROMPT), one item a press: the plugin holds those back while the spot
+// is gathered and opens the window for them once it's done, one after the other as each is closed (forge_onUpdate).
+// With that switch off it stops at the first item the pouch refuses, as it did before.
 // The plugin rolls the item before using up the gather (the game does it the other way round), so stopping for a
 // carried item costs nothing. Every item still gets its own roll.
 //
-// Messages: the pouch posts an "obtained" line per item (MESSAGE, kind 0, message 9). While a spot is gathered they
-// are held back in order, with the lines of the same item merged into one with the summed quantity ("Iron Ore x3").
-// They are posted when the spot is done. Other messages (pouch full...) keep their place in the queue.
+// Messages: the pouch posts an "obtained" line per item (MESSAGE, kind 0, message 9), and a line when it can't take
+// one (message 12, the pouch is full or the item at its limit). While a spot is gathered they are held back in order,
+// with the lines of the same item merged into one with the summed quantity ("Iron Ore x3"). They are posted when the
+// spot is done, all in one notification: the log puts the lines posted between MSG_BEGIN and MSG_END in one box, as
+// the game does for its own lists. A box takes 6 lines (the log drops a 7th), so a longer list goes on in a new box.
+// The pouch's line stays where it came, after the items the pouch took.
 
 static u32 g_add_result = ADD_NONE; // the pouch's answer to the last item given
 static u32 g_last_extra, g_total;   // for Forge's menu: extra items from the last spot, and this session
@@ -197,7 +236,12 @@ static struct { u32 kind, id, item, quantity, extra; } g_queue[MAX_QUEUED];
 
 static u32 message_hook(u32 kind, u32 id, u32 item, u32 quantity, u32 extra) {
     if (!g_holding) return ORIGINAL(Message, g_message_hook)(kind, id, item, quantity, extra);
-    if (kind == 0 && id == MSG_OBTAINED) {
+    if (id != MSG_OBTAINED) // (the same warning for each gather of an item at its limit: once)
+        for (u32 i = 0; i < g_queued; i++)
+            if (g_queue[i].kind == kind && g_queue[i].id == id && g_queue[i].item == item &&
+                g_queue[i].quantity == quantity)
+                return 0;
+    if (g_merge && kind == 0 && id == MSG_OBTAINED) {
         for (u32 i = 0; i < g_queued; i++) {
             if (g_queue[i].kind == 0 && g_queue[i].id == MSG_OBTAINED && g_queue[i].item == item) {
                 u32 sum = g_queue[i].quantity + quantity;
@@ -214,15 +258,22 @@ static u32 message_hook(u32 kind, u32 id, u32 item, u32 quantity, u32 extra) {
 }
 
 static void hold_messages(bool on) {
-    g_holding = on && g_merge && g_message_hook.original;
+    g_holding = on && (g_merge || g_one_box) && g_message_hook.original;
     g_queued = 0;
 }
 
 static void post_messages(void) {
     g_holding = false;
-    for (u32 i = 0; i < g_queued; i++)
+    bool boxed = g_one_box && g_queued > 1;
+    for (u32 i = 0; i < g_queued; i++) {
+        if (boxed && i % BOX_LINES == 0) {
+            if (i) FN(Query, MSG_END)();
+            FN(Query, MSG_BEGIN)();
+        }
         ORIGINAL(Message, g_message_hook)(g_queue[i].kind, g_queue[i].id, g_queue[i].item, g_queue[i].quantity,
                                           g_queue[i].extra);
+    }
+    if (boxed) FN(Query, MSG_END)();
     g_queued = 0;
 }
 
@@ -234,7 +285,78 @@ static u32 find_pop(u32 spop, u32 id) {
 
 static bool pouch_took_it(void) { return g_add_result != ADD_NONE && g_add_result <= ADD_TAKEN_MAX; }
 
+// The pouch's answer lets the spot go on: taken, or (rolling every gather) at its limit or waiting for a free slot
+static bool keep_rolling(void) {
+    if (pouch_took_it()) return true;
+    return g_roll_all && g_prompt_hook.original && (g_add_result == ADD_AT_LIMIT || g_add_result == ADD_NO_ROOM);
+}
+
+// The items waiting for the replace window: noted while a spot is gathered, shown once it's done
+static bool g_spot;
+static u32 g_lefts, g_prompt_wait;
+static struct { u16 item; u8 quantity; } g_left[MAX_LEFT];
+
+static u32 prompt_hook(u32 item, u32 quantity) {
+    if (!g_spot) return ORIGINAL(Prompt, g_prompt_hook)(item, quantity);
+    for (u32 i = 0; i < g_lefts; i++) {
+        if (g_left[i].item == item) {
+            u32 sum = g_left[i].quantity + quantity;
+            g_left[i].quantity = sum > 0xFF ? 0xFF : sum;
+            return 0;
+        }
+    }
+    if (g_lefts < MAX_LEFT) g_left[g_lefts].item = item, g_left[g_lefts].quantity = quantity, g_lefts++;
+    return 0; // (the pouch doesn't look at it)
+}
+
+// Opens the replace window for the next waiting item when it's free. Called after a spot and every frame.
+static void prompt_next(void) {
+    if (!g_lefts || g_spot) return;
+    u32 item = FN(Query, PROMPT_ITEM)();
+    if (!item) { // (no window: the quest is over)
+        if (++g_prompt_wait > PROMPT_TRIES) {
+            forge_log(LOG_WARN, "field-qol: no replace window, %u waiting items left behind", g_lefts);
+            g_lefts = g_prompt_wait = 0;
+        }
+        return;
+    }
+    g_prompt_wait = 0;
+    u8 *pending = (u8 *)(item - PROMPT_PENDING);
+    if (*pending || FN(Query, PROMPT_OPEN)()) return; // (one is waiting or open: the next waits for it)
+    ORIGINAL(Prompt, g_prompt_hook)(g_left[0].item, g_left[0].quantity);
+    if (!*pending) return; // (not taken: again next frame)
+    for (u32 i = 1; i < g_lefts; i++) g_left[i - 1] = g_left[i];
+    g_lefts--;
+}
+
 static bool carrying(u32 hunter) { return (*(u32 *)(hunter + HUNTER_STATE) & STATE_CARRYING) != 0; }
+
+// The carve spots of Gypceros playing dead, noted each time one starts or ends an action
+static struct { u32 gypceros; s32 pop; } g_playing_dead[MAX_PLAYING_DEAD];
+
+static u32 play_dead_hook(u32 gypceros, u32 kind, u32 action, u32 a3) {
+    u32 r = ORIGINAL(Method4, g_play_dead_hook)(gypceros, kind, action, a3);
+    u32 data = *(u32 *)(gypceros + EM009_DATA);
+    s32 pop = data ? *(s32 *)(data + EM009_DEAD_POP) : -1;
+    u32 slot = MAX_PLAYING_DEAD;
+    for (u32 i = 0; i < MAX_PLAYING_DEAD && slot == MAX_PLAYING_DEAD; i++)
+        if (g_playing_dead[i].gypceros == gypceros) slot = i;
+    for (u32 i = 0; i < MAX_PLAYING_DEAD && slot == MAX_PLAYING_DEAD; i++)
+        if (!g_playing_dead[i].gypceros || g_playing_dead[i].pop < 0) slot = i; // (a free entry)
+    if (slot < MAX_PLAYING_DEAD) g_playing_dead[slot].gypceros = gypceros, g_playing_dead[slot].pop = pop;
+    return r;
+}
+
+// A carve spot of a living monster: Gypceros playing dead, or a monster that is told about carves
+static bool living_monster(u32 pop) {
+    u16 id = *(u16 *)(pop + POP_ID);
+    for (u32 i = 0; i < MAX_PLAYING_DEAD; i++)
+        if (g_playing_dead[i].gypceros && g_playing_dead[i].pop >= 0 && (u16)g_playing_dead[i].pop == id) return true;
+    u32 enemy = FN(Is, POP_ENEMY)(pop);
+    if (!enemy) return false;
+    Is carve_state = *(Is *)(*(u32 *)enemy + ENEMY_CARVE_STATE);
+    return carve_state(enemy) != 0;
+}
 
 // Gathers the rest of the spot after the game's own gather. Returns why it stopped (shown in Forge's menu).
 static const char *gather_rest(u32 hunter, u32 notify, u32 *extra) {
@@ -245,6 +367,7 @@ static const char *gather_rest(u32 hunter, u32 notify, u32 *extra) {
     for (*extra = 0; *extra < MAX_EXTRA;) {
         u32 pop = find_pop(spop, id);
         if (!pop) return "spot gone";
+        if (living_monster(pop)) return "living monster";
         if (*(u16 *)(pop + POP_LEFT) == LEFT_UNLIMITED) return "unlimited spot";
         if (!FN(Is, POP_CAN_GATHER)(pop)) return "used up";
         if (carrying(hunter)) return "carrying";
@@ -260,7 +383,7 @@ static const char *gather_rest(u32 hunter, u32 notify, u32 *extra) {
         g_add_result = ADD_NONE;
         FN(Give, GIVE)(hunter, item, quantity, notify, 0);
         ++*extra;
-        if (!pouch_took_it()) return "pouch refused";
+        if (!keep_rolling()) return "pouch refused";
         if (left == 2) return "used up";
     }
     return "limit";
@@ -270,9 +393,10 @@ static u32 gather_hook(u32 hunter, u32 empty_if_none, u32 notify) {
     bool on = g_gather_all && hunter && FN(Is, IS_LOCAL)(hunter) == 1;
     g_add_result = ADD_NONE;
     hold_messages(on);
+    g_spot = on && g_roll_all;
     u32 r = ORIGINAL(Gather, g_gather_hook)(hunter, empty_if_none, notify);
-    // (when the first item didn't fit, or became a carried item, the press ends as usual)
-    if (on && r == 1 && pouch_took_it()) {
+    // (when the first item became a carried item, or the pouch refused it, the press ends as usual)
+    if (on && r == 1 && keep_rolling()) {
         u32 extra = 0;
         g_last_stop = gather_rest(hunter, notify, &extra);
         g_last_extra = extra;
@@ -281,7 +405,9 @@ static u32 gather_hook(u32 hunter, u32 empty_if_none, u32 notify) {
             forge_log(LOG_INFO, "field-qol: %u more from spot %d (%s)", extra, *(s16 *)(hunter + HUNTER_POP_ID),
                       g_last_stop);
     }
+    g_spot = false;
     post_messages();
+    prompt_next();
     return r;
 }
 
@@ -530,6 +656,10 @@ EXPORT void forge_onInit(void) {
     bool pouch = hook(&g_add_hook, PLAYER_ADD, add_hook) & hook(&g_add_quest_hook, PLAYER_ADD_QUEST, add_quest_hook);
     if (!hook(&g_message_hook, MESSAGE, message_hook))
         forge_log(LOG_WARN, "field-qol: message hook FAILED, one line per gathered item");
+    if (!hook(&g_prompt_hook, POUCH_PROMPT, prompt_hook))
+        forge_log(LOG_WARN, "field-qol: pouch window hook FAILED, a full pouch stops the spot");
+    if (!hook(&g_play_dead_hook, EM009_SET_ACTION, play_dead_hook))
+        forge_log(LOG_WARN, "field-qol: Gypceros hook FAILED, its playing-dead carves are taken at once");
     g_gather_hooked = pouch && hook(&g_gather_hook, GATHER, gather_hook);
     forge_log(g_gather_hooked ? LOG_INFO : LOG_WARN, "field-qol: %s",
               g_gather_hooked ? "one press gathers the whole spot" : "gathering hook FAILED, gathering as usual");
@@ -548,6 +678,11 @@ EXPORT void forge_onInit(void) {
         forge_log(LOG_WARN, "field-qol: sound hook FAILED, Send all plays a sound per slot");
     forge_log(g_rewards_hooked ? LOG_INFO : LOG_WARN, "field-qol: %s",
               g_rewards_hooked ? "Send all to Item Box & Exit on the reward screen" : "a rewards hook FAILED, no Send all");
+}
+
+EXPORT void forge_onUpdate(float dt) {
+    (void)dt;
+    if (g_main) prompt_next();
 }
 
 EXPORT void forge_onImGuiInit(void *ctx, void *alloc, void *freefn) {
@@ -578,6 +713,8 @@ EXPORT void forge_onImGuiRender(void) {
     igCheckbox("One press gathers the whole spot", &g_gather_all);
     igTextUnformatted("Eggs and other carried items still take a press each.", NULL);
     igCheckbox("One message per item (\"Iron Ore x3\")", &g_merge);
+    igCheckbox("One notification per spot", &g_one_box);
+    igCheckbox("Full pouch: gather everything, then ask what to replace", &g_roll_all);
     static char line[96];
     char *q = put(line, "Last spot: ");
     q = put_u(q, g_last_extra);
