@@ -9,8 +9,9 @@ Quality-of-life changes for quests:
     spot's items come in one notification, and with a full pouch you choose
     what to replace once the spot is done.
   - The Item Pouch's Deliver works anywhere on the map, not only in the base camp.
-  - "Send all to Item Box & Exit" on the quest reward screen, for the reward box
-    and your Palicoes' gathered items.
+  - "Send all to Item Box & Exit" on the quest reward screen (reward box,
+    Palicoes' items, Item Appraisal), Meownster Hunters, Hunters for Hire and
+    the trade cart's Claim Items.
 
 Only tested on MHGU Recomp, with the English game text.
 
@@ -27,8 +28,9 @@ Install
    Open a terminal in the "field-qol" folder and run:
      - macOS and Linux: python3 tools/make_arcs.py
      - Windows:         py tools\make_arcs.py
-   It writes romfs/nativeNX/eng/arc/result_eng.arc and village/common_eng.arc
-   into this folder.
+   It writes romfs/nativeNX/eng/arc/result_eng.arc, village/common_eng.arc and
+   facility/shoptrade_eng.arc into this folder. Run it again after updating
+   the mod.
 
 Settings
 --------

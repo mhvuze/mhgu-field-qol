@@ -101,12 +101,28 @@ class Patch:
         n = 0
         for p in self.recs['param']:
             if p['ParentID'] == pid and p['Type'] == 2 and p['ValueCount'] == 1 and self.s(p['name']) == name and \
-                    struct.unpack_from('<f', self.out, base + p['value'])[0] == old:
+                    abs(struct.unpack_from('<f', self.out, base + p['value'])[0] - old) < 1e-4:
                 p['value'] = self.kv32_float(new)
                 n += 1
         assert n, (parent, name, old)
         self.moved.add('param')
         return n
+
+    def set_exe_flag(self, inst_name, index, on):
+        """Shows (or hides) instance inst_name in one of the layout's states: its execution param holds a u8 per state
+        (the flows in the order of their IDs). The values are shared, so the param gets its own copy, at the end."""
+        iid = self.recs['inst'][self.by_name('inst', inst_name)]['ID']
+        exe = self.g.h['instExeParamOffset']
+        own = [p for p in self.recs['param'][exe:] if p['ParentID'] == iid]
+        assert len(own) == 1 and own[0]['Type'] == 3, (inst_name, len(own))
+        p = own[0]
+        at = self.g.h['keyValue8Offset'] + p['value']
+        flags = bytearray(self.out[at:at + p['ValueCount']])
+        assert index < len(flags), (inst_name, index, len(flags))
+        flags[index] = 1 if on else 0
+        p['value'] = len(self.out) - self.g.h['keyValue8Offset']
+        self.out += flags
+        self.moved.add('param')
 
     def build(self):
         h = dict(self.g.h)

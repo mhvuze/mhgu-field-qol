@@ -29,6 +29,7 @@ typedef struct {
 enum { LOG_DEBUG = 0, LOG_INFO = 1, LOG_WARN = 2, LOG_ERROR = 3 };
 
 extern void forge_hook_create(ForgeHook *hook, u32 target, u32 detour, u32 *original);
+extern u32 forge_input_isDown(u32 button); // (nn::hid NpadButton bits: A 0, B 1, X 2, Y 3, ... L 6, R 7, ZL 8, ZR 9)
 extern u32 forge_mem_getMainTextAddr(void);
 extern void forge_log(int level, const char *fmt, ...);
 

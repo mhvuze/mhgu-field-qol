@@ -14,6 +14,9 @@ as usual, and skills and early breaks work the same. It stops:
 - before eggs, powderstone and other items you carry in your hands: those still take a press each;
 - when you carve Gypceros while it plays dead: you get one carve, as usual, before it gets up.
 
+Hold **R** as you start gathering to gather a single item instead, for spots like Khezu Welps where you can only
+carry one and gathering everything would use up every chance.
+
 A full pouch doesn't stop it: every gather is still rolled, and the pouch takes what fits (items you already have
 stack as usual). Items at their stack limit are lost, as in the game. For items that need a free slot, the game's
 "Item Pouch is full" window opens once the spot is done, one item after the other, so you choose what to replace in
@@ -27,8 +30,11 @@ only in the base camp. Which items can be delivered doesn't change: the quest's 
 not carried items such as eggs.
 
 **Send all to Item Box & Exit.** The quest reward screen gets a new menu row under "Send to the Item Box". It sends
-every item of the section to your Item Box and moves on to the next section. This works for the reward box and for
-your Palicoes' gathered items. If the box fills up first, the menu stays open with what's left.
+every item of the section to your Item Box and moves on to the next section. This works for the reward box, your
+Palicoes' gathered items, the rewards from Meownster Hunters and Hunters for Hire, and the Item Appraisal ("Send all to
+Item Box & Exit" under "Send to Boxes": items to the Item Box, appraised equipment and charms to the Equipment Box).
+The trade cart's Claim Items gets the same row: it sends all three carts' items to the Item Box and closes Claim Items.
+If the box fills up first, the menu stays open with what's left.
 
 Every feature can be turned on and off in Forge's menu (press **Insert** in game, then open **Field QoL**). They're all
 on by default, and the switches reset each time the game starts.
@@ -56,7 +62,8 @@ To uninstall, delete the `field-qol` folder, or turn the mod off in the recomp's
 - **Game version:** MHGU 1.4.0, which the recomp needs anyway.
 - **Language:** the new reward screen row needs the English menu layout. With another game language, gathering and
   delivering still work, but the reward screen keeps its usual menu.
-- **Other mods:** the layout tool writes the mod's own copies of `result_eng.arc` and `common_eng.arc`. If another
+- **Other mods:** the layout tool writes the mod's own copies of `result_eng.arc`, `common_eng.arc` and
+  `shoptrade_eng.arc`. If another
   mod also changes those archives, the recomp merges the changes of both.
 
 ## Building
@@ -80,7 +87,7 @@ macOS's default `~/Library/Application Support/MHGURecomp`.
 | `src/plugin.c` | The plugin: game addresses, hooks, and how each feature works |
 | `src/forge.h` | The part of Forge's plugin API the plugin uses |
 | `src/start.S`, `build/` | NRO start code, linker script and ELF to NRO converter |
-| `tools/make_arcs.py` | Adds the fourth row to the reward screen's menu layout |
+| `tools/make_arcs.py` | Adds the "Send all" row to the reward screen's and the trade cart's menu layouts |
 | `tools/mtgui.py`, `tools/patchgui.py` | A reader and an append-only editor for MHGU GUI files |
 | `release/README.txt` | The readme that goes in the release zip |
 

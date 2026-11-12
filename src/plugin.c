@@ -61,9 +61,34 @@
 #define GUI_GET_Y 0x545AF8        // cGUI: an instance's y (gui, instance)
 #define GUI_SET_Y 0x545AC0        // cGUI: set an instance's y (gui, instance, y)
 #define CURSOR_SYNC 0x551D58      // move a cursor's drawing to an instance (cursor, uio, instance)
+#define BOX_HAS_ROOM 0x199390     // sItemBox: has room for an item (box, item)
+#define BOX_ADD 0x19945C          // sItemBox: add an item (box, item, quantity, 0, &left over)
+#define MONNYAN_INIT 0x1B600C     // Meownster Hunters' reward list: set up with its menu (list, uio, ...)
+#define MONNYAN_UPDATE 0x1B607C   // ...every frame (list)
+#define MONNYAN_EVENT 0x1ADAEC    // ...tell the screen (list, 0xB, event, info)
+#define MONNYAN_INFO 0x1BBE04     // ...an event's info, made empty (info)
+#define EQUIP_ADD 0x143160        // the equipment box: add a piece (box, 0, &piece) -> its slot, 0xFFFF: full
+#define RESULT_ITEM_SPECIAL 0x3C6B64 // an appraised item marked at item data +0x12 (result, slot)
+#define APPRAISAL_UPDATE 0x3850B0 // uUIResult: run the appraisal for a frame (ui) -> 1: done
+#define APPRAISAL_HELP 0x390AAC   // uUIResult: the appraisal's help line (ui); in the menu message 0x85 + cursor row
+// The trade cart (Neko, uUITradeCenter): its Claim Items screen and its menu (cUIOTradeCenterBoxMenu)
+#define TRADE_CLAIM 0x7A3480      // uUITradeCenter: Claim Items for a frame (ui) -> 2: closed by B
+#define TRADE_MENU_DRAW 0x63ED84  // cUIOTradeCenterBoxMenu: draw what changed (uio)
+#define TRADE_CART 0x195448       // a trade cart's inbox (the GOT_ITEMS object, cart 0-2) -> cart, 0 past the last
+#define TRADE_CHANGED 0x1955B8    // (the GOT_ITEMS object) after the inbox changed, as the game's Send calls it
+#define TRADE_REDRAW 0x7A0B74     // uUITradeCenter: draw the inbox again (ui, 1)
+#define BOX_PUT 0x1990DC          // sItemBox: put an item in (box, item, quantity, 0), as the trade's Send does
+#define MSG_SET 0x56FC58          // cUIO: an object's text from a message (uio, instance, object, 0, 1, message)
+#define INST_VISIBLE 0x56E528     // cUIO: show or hide an instance (uio, instance, on)
+#define LOOK_OF 0x560E90          // a text look (the GOT_LOOKS object, kind): 0 as usual, 0xB greyed
+#define GOT_LOOKS 0x1838BD8
+#define GH_UPDATE 0x710A64        // uUIGuestHunterResult (Hunters for Hire's results): every frame (ui)
+#define MENU_SET 0x624664         // cUIOReward: set the menu's rows and looks (uio, rows, ...)
 #define UI_COMPONENT 0x65CB3C     // uUIBase: one of its cUIO (ui, index); the reward screen's menu is index 0
 #define GOT_PAD 0x183931C         // the game's pad state
 #define GOT_RESULT 0x1838DE0      // the game's quest result
+#define GOT_BOX 0x183A81C         // the game's sItemBox
+#define GOT_EQUIP_BOX 0x1839394   // the game's equipment box
 
 // ================================================================== game structures
 
@@ -99,19 +124,73 @@
 #define RESULT_CURSOR 0xA0        // the menu's cursor
 #define CURSOR_ROW 0xD            // (u8) its row
 #define CURSOR_ROWS 0xE           // (u8) its rows
+#define CURSOR_COUNT 0x14         // (u16) its entries (the moves stop at the last)
 #define SEND_FULL 7
 #define ITEM_SPECIAL 0x16         // (u8, item data) handed over by RESULT_SPECIAL instead of sent
 // the pad
 #define PAD_PRESSED 0x6BFC        // the buttons pressed this frame
 #define PAD_A 0x2000
 #define PAD_B 0x4000
+// Meownster Hunters' reward list (uUIMonNyan's): its own menu logic over the same reward menu (mode 7)
+#define MN_UIO 0x08
+#define MN_STATE 0x10             // 1: the menu; 2: the list is empty, the menu shows Done
+#define MN_LIST 0x14              // {u16 *slots, u32 count}, a slot as the reward screen's
+#define MN_CURSOR 0x20            // the menu's cursor (+0xD its row, +0xE its rows, +0x10 its page)
+#define MN_MENU 1
+#define MN_DONE 2
+#define MN_EV 0xB
+#define MN_EV_SENT 2
+#define MN_EV_EMPTY 0x10
+#define MN_ROWS_DONE 8            // (MENU_SET: the menu with Done)
+#define CURSOR_PAGE 0x10
+// the reward screen's appraisal: its menu is state 4 (A: state 5 + row), its list {entry *, count} at +0x7C, an entry
+// 0x34 bytes: u32 kind (0 none, 1 an item, 2 a piece of equipment), the item's slot at +4, the piece at +8
+#define APPRAISAL_MENU 4
+#define APPRAISAL_SELL 6         // (Sell Items & Exit's confirmation: cancelled, the menu with the cursor on its row 1)
+#define APPRAISAL_LIST 0x7C
+#define APPRAISAL_ENTRY 0x34
+#define ENTRY_ITEM 1
+#define ENTRY_EQUIP 2
+#define ITEM_SPECIAL_APPRAISED 0x12
+#define EQUIP_FULL 0xFFFF
+// uUIGuestHunterResult, Hunters for Hire's results: the same reward menu (mode 6, its component 1)
+#define GH_STATE 0x4C             // 2: the menu (3 Take, 4 Send, 5 Sell)
+#define GH_MENU 2
+#define GH_REDRAW 0x55
+#define GH_LIST 0x3C              // {u16 *slots, u32 count}
+#define GH_CURSOR 0x58
+#define GH_UIO_INDEX 1
+// the Claim Items screen: its sub-state (u8) 0 the menu (A: 1 + row: Take, Send's grid, Sell), its own copy of the pad
+#define TRADE_SUBSTATE 7
+#define TRADE_PAD 0x80
+#define TRADE_CURSOR 0x178
+#define TRADE_CARTS 3
+#define CART_CELLS 0x10           // 3 rows of 10 cells {u16 item, s16 quantity}
+#define CART_CELL_COUNT 30
+// its menu: rows at instances 5-7 (messages 0x1A + row, 0x1D for Exit), the fourth row (tools/make_arcs.py) 119
+#define TM_FLAGS 0x4C             // what to draw: 1 the highlight, 4 the rows, 8 their visibility
+#define TM_MODE 0x58              // 1: nothing to claim (Take and Send greyed, Exit)
+#define TM_CURSOR 0x50
+#define TM_ROW_SEND 6
+#define TM_ROW_THIRD 7
+#define TM_ROW_FOURTH 119
+#define TM_HIGHLIGHT 18
+#define TM_SPACING 14
+#define TM_MSG_SELL 0x1C
+#define TM_MSG_EXIT 0x1D
+#define LOOK_GREYED 0xB
+#define SOUND_SENT 0x1F           // (UI_SOUND kind 0)
+#define SOUND_FULL 3
+#define SOUND_BACK 4             // (B moving the cursor to the last row)
 // cUIOReward, the reward menu, and its layout
 #define UIO_GUI 0x24
 #define UIO_MODE 0x4C             // which screen uses the menu: the reward screen's sections are 1, 2 and 7
 #define UIO_CURSOR 0x50
-#define RESULT_MODES 0x86         // (bits 1, 2 and 7; the Meowcenaries' screens use other modes)
+#define RESULT_MODES 0xC6         // (bits 1, 2, 6 Hunters for Hire, 7 Meownster Hunters; other screens use others)
+#define MODE_APPRAISAL 3          // the reward screen's appraisal: two rows, Send to Boxes and Sell Items & Exit
 #define GUI_INSTANCES 0x298       // the layout's instance count
-#define ROW_SEND 7                // layout instances: the second row (Send to the Item Box)
+#define ROW_TAKE 6                // layout instances: the first row
+#define ROW_SEND 7                // the second row (Send to the Item Box)
 #define ROW_THIRD 8               // the third row, which the plugin turns into "Send all..."
 #define ROW_FOURTH 89             // the fourth row, added by tools/make_arcs.py
 #define ROW_OBJECT 1              // a row's text object
@@ -127,6 +206,9 @@
 #define BOX_LINES 6               // the lines a notification box takes
 #define MAX_LEFT 16               // the items waiting for the replace window
 #define PROMPT_TRIES 600          // frames without a replace window before the waiting items are dropped (about 10 s)
+#define BUTTON_R 7                // (forge_input_isDown)
+#define SINGLE_FRAMES 60          // R held this many frames ago or less: a single gather (the gather comes partway into
+                                  // the gathering motion, so R can be let go by then)
 #define PROMPT_PENDING 8          // (PROMPT_ITEM - 8: an item waits for the window)
 #define MAX_SOUNDS 4              // the most distinct sounds remembered during one Send all
 
@@ -134,6 +216,7 @@ typedef u32 (*Gather)(u32 hunter, u32 empty_if_none, u32 notify);
 typedef void (*Give)(u32 hunter, u32 item, u32 quantity, u32 notify, u32 zero);
 typedef u32 (*Add)(u32 hunter, u32 item, u32 quantity, u32 flags, u32 zero);
 typedef u32 (*Is)(u32 self);
+typedef u32 (*Is2)(u32 self, u32 a);
 typedef u32 (*PopUse)(u32 spop, u32 id, u32 *pop);
 typedef u32 (*PopItem)(u32 pop, u16 *item, u8 *quantity);
 typedef u32 (*IsCarried)(u32 items, u32 item);
@@ -147,12 +230,18 @@ typedef u32 (*Send)(u32 ui, u32 slot);
 typedef void (*Special)(u32 result, u32 slot, u32 zero);
 typedef u32 (*Data)(u32 items, u32 item);
 typedef u32 (*Sound)(u32 kind, u32 id);
+typedef u32 (*EquipAdd)(u32 box, u32 zero, u32 piece);
+typedef u32 (*BoxAdd)(u32 box, u32 item, s32 quantity, u32 zero, s32 *left);
+typedef u32 (*Event)(u32 self, u32 kind, u32 event, void *info);
+typedef void (*MenuSet)(u32 uio, u32 rows, u32 a, u32 b);
 typedef void (*Rows)(u32 uio, u32 list, u32 flag);
 typedef void (*Looks)(u32 uio, u32 enabled, u32 row);
 typedef void (*Method)(u32 self);
 typedef u32 (*Method4)(u32 self, u32 a1, u32 a2, u32 a3);
 typedef void (*SetText)(u32 uio, u32 inst, u32 obj, const char *text);
 typedef void (*SetInt)(u32 uio, u32 inst, u32 obj, u32 v);
+typedef void (*SetInt3)(u32 uio, u32 inst, u32 v);
+typedef void (*MsgSet)(u32 uio, u32 inst, u32 obj, u32 zero, u32 one, u32 message);
 typedef u32 (*Look)(u32 enabled, u32 selected, u32 a, u32 b);
 typedef const char *(*EntryText)(u32 entry);
 typedef float (*GetY)(u32 gui, u32 inst);
@@ -170,10 +259,11 @@ static u32 g_main; // the game's main module
 static ForgeHook g_gather_hook, g_add_hook, g_add_quest_hook, g_message_hook, g_play_dead_hook, g_prompt_hook;
 static ForgeHook g_deliverable_hook, g_clear_account_hook;
 static ForgeHook g_section_hook, g_rows_hook, g_looks_hook, g_reward_update_hook, g_sound_hook;
+static ForgeHook g_monnyan_init_hook, g_monnyan_hook, g_gh_hook, g_appraisal_hook, g_appraisal_help_hook, g_trade_hook, g_trade_menu_hook;
 static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 
 // The switches in Forge's menu
-static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true;
+static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true, g_hold_single = true;
 static bool g_deliver_anywhere = true, g_send_all = true;
 
 // The compiler may emit memset calls; there is no C library to provide one
@@ -201,6 +291,10 @@ void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; retur
 //   - before an item carried in the hands (eggs, powderstone...): that gather isn't used, so the next press gathers
 //     it as usual; likewise when the hunter is already carrying something;
 //   - when the spot runs out or breaks early (sPop's own count and early-break roll).
+// Holding R as the gathering starts gathers a single item, as the game does (for a spot whose items can only be carried
+// one at a time, such as Khezu Welps, where gathering at once would use up every chance): forge_onUpdate notes the
+// last frame R was down.
+//
 // A full pouch doesn't stop it: every gather is rolled, the pouch takes what it can (an item it holds already stacks),
 // an item at its limit is lost as in the game ("can't carry any more"), and an item with no free slot waits. The game
 // would open the replace window for it (POUCH_PROMPT), one item a press: the plugin holds those back while the spot
@@ -389,8 +483,11 @@ static const char *gather_rest(u32 hunter, u32 notify, u32 *extra) {
     return "limit";
 }
 
+static u32 g_since_r = SINGLE_FRAMES + 1; // frames since R was last down
+
 static u32 gather_hook(u32 hunter, u32 empty_if_none, u32 notify) {
-    bool on = g_gather_all && hunter && FN(Is, IS_LOCAL)(hunter) == 1;
+    bool single = g_hold_single && g_since_r <= SINGLE_FRAMES;
+    bool on = g_gather_all && !single && hunter && FN(Is, IS_LOCAL)(hunter) == 1;
     g_add_result = ADD_NONE;
     hold_messages(on);
     g_spot = on && g_roll_all;
@@ -464,12 +561,24 @@ static u32 clear_account_hook(void) {
 // game's third row (Done, by then) and the game gets the A, so the section ends as if Done was chosen. When the box
 // fills up first, the menu stays with what is left, and the game never sees the A.
 //
+// Meownster Hunters' rewards use the same menu (mode 7) with logic of their own (MONNYAN_UPDATE, state 1 the menu, its
+// cursor at +0x20, its list at [+0x14]): Send to the Item Box adds a slot to the box with BOX_ADD (after BOX_HAS_ROOM)
+// and tells the screen (MONNYAN_EVENT, sent); when the list is empty it shows Done (MENU_SET, the cursor on it, state
+// 2), where A closes the screen. Send all does the same for every slot, then, when the list is empty, sets up Done the
+// same way and leaves the A to the game, which closes the screen.
+//
+// Hunters for Hire's results (uUIGuestHunterResult, GH_UPDATE) use the same menu (mode 6) too, with their own logic:
+// state 2 the menu, its cursor at +0x58, its list at +0x3C; Send to the Item Box as above; A on the menu with an empty
+// list closes the screen. Send all sends every slot, plays the sound once, and leaves that A to the game.
+//
 // Sending plays a sound per slot. The game's sound manager starts each one on its own voice, so several in one frame
 // add up to a louder sound: during a Send all, each sound plays only once.
 
 static const char SEND_ALL_TEXT[] = "Send all to Item Box & Exit";
 static u32 g_menu_uio;     // the menu showing the added row (0: none)
 static u32 g_result_uio;   // the reward screen's menu
+static u32 g_monnyan_uio;  // Meownster Hunters' reward menu
+static u32 g_gh_uio;       // Hunters for Hire's
 static bool g_on_send_all; // the cursor is on the added row (the game's cursor stays on Send)
 
 // The sounds already played during this Send all
@@ -491,8 +600,18 @@ static bool has_fourth_row(u32 uio) {
     return gui && *(u32 *)(gui + GUI_INSTANCES) > ROW_FOURTH; // (the layout from tools/make_arcs.py is loaded)
 }
 
-// The row the player sees highlighted: 0 Take, 1 Send, 2 Send all, 3 the game's third (Sell or Done)
-static u32 shown_row(u32 game_row) { return g_on_send_all ? 2 : game_row == 2 ? 3 : game_row; }
+// The menu showing the added row: its rows (3, or 2 for the appraisal) and the row of Send, which "Send all" follows.
+// With three rows the game's cursor stays on Send while "Send all" is highlighted (g_on_send_all); the appraisal's
+// cursor is given a third row instead (two rows wrap, so up and down couldn't be told apart), which the plugin maps.
+static u32 g_menu_rows = 3, g_send_row = 1;
+static bool g_cursor_extended;
+static const u32 ROW_INSTANCES[] = {ROW_TAKE, ROW_SEND, ROW_THIRD, ROW_FOURTH};
+
+// The row the player sees highlighted: the game's rows with "Send all" after Send
+static u32 shown_row(u32 game_row) {
+    if (g_cursor_extended) return game_row;
+    return g_on_send_all ? g_send_row + 1 : game_row > g_send_row ? game_row + 1 : game_row;
+}
 
 static u32 *section_list(u32 ui, u32 section) {
     return (u32 *)(ui + RESULT_LISTS + 8 * (section <= 3 ? section : 0)); // (as the game picks it)
@@ -530,6 +649,116 @@ static bool section_empty(u32 ui, u32 section) {
     return true;
 }
 
+static void track_cursor(u8 *cursor, u32 before, u32 was);
+
+// The appraisal: Send to Boxes as the game does it (items to the Item Box as the other sections', items marked at
+// +0x12 to RESULT_ITEM_SPECIAL, equipment to the equipment box), every entry
+static bool appraisal_empty(u32 ui) {
+    const u32 *list = (const u32 *)(ui + APPRAISAL_LIST);
+    for (u32 i = 0; list[0] && i < list[1]; i++)
+        if (*(u32 *)(list[0] + APPRAISAL_ENTRY * i)) return false;
+    return true;
+}
+
+static u32 appraisal_send_all(u32 ui) {
+    const u32 *list = (const u32 *)(ui + APPRAISAL_LIST);
+    u32 items = GLOBAL(GOT_ITEMS), sent = 0;
+    g_one_sound_each = true, g_sounds = 0;
+    for (u32 i = 0; list[0] && i < list[1]; i++) {
+        u32 *entry = (u32 *)(list[0] + APPRAISAL_ENTRY * i);
+        u16 *slot = (u16 *)(entry + 1);
+        if (entry[0] == ENTRY_ITEM && slot[0]) {
+            u32 data = FN(Data, ITEM_DATA)(items, slot[0]);
+            if (!data) continue;
+            if (*(u8 *)(data + ITEM_SPECIAL_APPRAISED)) {
+                FN(Special, RESULT_ITEM_SPECIAL)(GLOBAL(GOT_RESULT), (u32)slot, 0);
+                entry[0] = entry[1] = 0;
+            } else if (FN(Send, SEND_TO_BOX)(ui, (u32)slot) == SEND_FULL) {
+                continue; // (the Item Box is full: the equipment may still fit)
+            } else if (!slot[1]) {
+                entry[0] = 0;
+            }
+            sent++;
+        } else if (entry[0] == ENTRY_EQUIP) {
+            if (FN(EquipAdd, EQUIP_ADD)(GLOBAL(GOT_EQUIP_BOX), 0, (u32)(entry + 2)) == EQUIP_FULL) {
+                FN(Sound, UI_SOUND)(0, SOUND_FULL);
+                continue;
+            }
+            entry[0] = 0;
+            FN(Sound, UI_SOUND)(0, SOUND_SENT);
+            sent++;
+        }
+    }
+    g_one_sound_each = false;
+    *(u8 *)(ui + RESULT_REDRAW) = 1;
+    return sent;
+}
+
+// The appraisal's menu (its own update, not a section's), its cursor given a third row, which the game's own moves then
+// use (wrapping as before): 0 Send to Boxes, 1 Send all (the plugin's), 2 Sell Items & Exit (the game's row 1)
+static u32 appraisal_hook(u32 ui) {
+    u32 uio = FN(Component, UI_COMPONENT)(ui, 0);
+    if (uio && uio != g_result_uio) {
+        g_result_uio = uio;
+        *(u8 *)(ui + RESULT_REDRAW) = 1;
+    }
+    static bool from_sell; // (Sell's confirmation was open: cancelled, the game's cursor is on its row 1)
+    u8 *cursor = (u8 *)(ui + RESULT_CURSOR);
+    u32 state = *(u32 *)(ui + RESULT_STATE);
+    if (state == APPRAISAL_SELL) from_sell = true; // (until the menu is back; a new appraisal starts on row 0)
+    bool menu = g_send_all && uio && uio == g_menu_uio && g_menu_rows == 2 &&
+                state == APPRAISAL_MENU && (cursor[CURSOR_ROWS] == 2 || cursor[CURSOR_ROWS] == 3);
+    if (!menu) {
+        g_cursor_extended = false;
+        return ORIGINAL(Is, g_appraisal_hook)(ui);
+    }
+    if (from_sell && cursor[CURSOR_ROW] == 1) cursor[CURSOR_ROW] = 2; // (back on Sell: the plugin's row 2)
+    from_sell = false;
+    u32 *pressed = (u32 *)(GLOBAL(GOT_PAD) + PAD_PRESSED), was = *pressed;
+    if (!g_cursor_extended) *(u8 *)(ui + RESULT_REDRAW) = 1; // (the rows' looks for the third row)
+    cursor[CURSOR_ROWS] = 3;
+    *(u16 *)(cursor + CURSOR_COUNT) = 3;
+    g_cursor_extended = true;
+    u32 row = cursor[CURSOR_ROW];
+    if (was & PAD_B) {
+        // the game's B goes to its last row, which is Send all here: to Sell instead
+        if (row != 2) {
+            cursor[CURSOR_ROW] = 2;
+            FN(Sound, UI_SOUND)(0, SOUND_BACK);
+            *(u8 *)(ui + RESULT_REDRAW) = 1;
+        }
+        *pressed = was & ~(PAD_B | PAD_A);
+    } else if ((was & PAD_A) && row == 1) {
+        u32 sent = appraisal_send_all(ui);
+        bool leaving = appraisal_empty(ui);
+        forge_log(LOG_INFO, "field-qol: sent %u appraised entries to the boxes%s", sent,
+                  leaving ? ", leaving" : ", a box is full");
+        if (!leaving) *pressed = was & ~PAD_A; // (with entries left the game would sell them; with none its A ends
+                                               // the appraisal, from any row)
+    } else if ((was & PAD_A) && row == 2) {
+        cursor[CURSOR_ROW] = 1; // (the game's Sell Items & Exit)
+    }
+    u32 r = ORIGINAL(Is, g_appraisal_hook)(ui);
+    *pressed = was;
+    // out of the menu (Send to Boxes' grid, Sell's confirmation): the game's rows again from this frame's drawing on,
+    // or the highlight would show its row 1 as Send all for a frame
+    if (*(u32 *)(ui + RESULT_STATE) != APPRAISAL_MENU) g_cursor_extended = false;
+    return r;
+}
+
+// Its help line, for the row the game sees: Send all gets Send to Boxes' line, Sell Items & Exit its own
+static void appraisal_help_hook(u32 ui) {
+    u8 *cursor = (u8 *)(ui + RESULT_CURSOR);
+    if (!g_cursor_extended || *(u32 *)(ui + RESULT_STATE) != APPRAISAL_MENU) {
+        ORIGINAL(Method, g_appraisal_help_hook)(ui);
+        return;
+    }
+    u8 row = cursor[CURSOR_ROW];
+    cursor[CURSOR_ROW] = row == 2 ? 1 : 0;
+    ORIGINAL(Method, g_appraisal_help_hook)(ui);
+    cursor[CURSOR_ROW] = row;
+}
+
 static u32 section_hook(u32 ui, u32 section) {
     // the reward screen's menu: known from its first frame (the rows are drawn again to show the added one)
     u32 uio = FN(Component, UI_COMPONENT)(ui, 0);
@@ -539,6 +768,7 @@ static u32 section_hook(u32 ui, u32 section) {
     }
 
     u8 *cursor = (u8 *)(ui + RESULT_CURSOR);
+    g_cursor_extended = false;
     bool menu = g_send_all && g_menu_uio && *(u32 *)(ui + RESULT_STATE) == STATE_MENU && cursor[CURSOR_ROWS] == 3;
     if (!menu) {
         g_on_send_all = false;
@@ -569,7 +799,12 @@ static u32 section_hook(u32 ui, u32 section) {
         return r;
     }
 
-    // the cursor's moves, with the extra row between Send (1) and the third (2)
+    track_cursor(cursor, before, was);
+    return r;
+}
+
+// The cursor's moves after the game's frame, with the extra row between Send (1) and the third (2)
+static void track_cursor(u8 *cursor, u32 before, u32 was) {
     u32 after = cursor[CURSOR_ROW];
     if (was & PAD_B) {
         g_on_send_all = false; // (the game moved its cursor to the third row)
@@ -586,40 +821,303 @@ static u32 section_hook(u32 ui, u32 section) {
     } else if (before == 2 && after == 1) { // up from the third row: stop on Send all
         g_on_send_all = true;
     }
+}
+
+// Meownster Hunters: the menu is known before the setup draws its rows
+static u32 monnyan_init_hook(u32 list, u32 uio, u32 a2) {
+    if (uio) g_monnyan_uio = uio;
+    return ORIGINAL(Method4, g_monnyan_init_hook)(list, uio, a2, 0);
+}
+
+static bool monnyan_empty(u32 list) {
+    const u32 *l = *(const u32 **)(list + MN_LIST);
+    const u16 *slots = l ? (const u16 *)l[0] : 0;
+    for (u32 i = 0; slots && i < l[1]; i++)
+        if (slots[2 * i]) return false;
+    return true;
+}
+
+// Sends every slot to the Item Box as Send to the Item Box does. Returns the slots sent; stops when the box is full.
+static u32 monnyan_send_all(u32 list, bool *full) {
+    u32 *l = *(u32 **)(list + MN_LIST), box = GLOBAL(GOT_BOX), sent = 0;
+    u16 *slots = l ? (u16 *)l[0] : 0;
+    *full = false;
+    g_one_sound_each = true, g_sounds = 0;
+    for (u32 i = 0; slots && i < l[1]; i++) {
+        u16 *slot = slots + 2 * i;
+        if (!slot[0]) continue;
+        if (!FN(Is2, BOX_HAS_ROOM)(box, slot[0])) { *full = true; break; }
+        u32 info[4] = {0};
+        FN(Is, MONNYAN_INFO)((u32)info);
+        info[1] = slot[0] | (u32)slot[1] << 16;
+        s32 left = 0;
+        FN(BoxAdd, BOX_ADD)(box, slot[0], (s16)slot[1], 0, &left);
+        if (left < 1) slot[0] = 0, left = 0;
+        slot[1] = (u16)left;
+        FN(Event, MONNYAN_EVENT)(list, MN_EV, MN_EV_SENT, info);
+        sent++;
+    }
+    g_one_sound_each = false;
+    return sent;
+}
+
+static u32 monnyan_hook(u32 list) {
+    u32 uio = *(u32 *)(list + MN_UIO);
+    u8 *cursor = (u8 *)(list + MN_CURSOR);
+    bool menu = g_send_all && uio && uio == g_monnyan_uio && uio == g_menu_uio &&
+                *(u32 *)(list + MN_STATE) == MN_MENU && cursor[CURSOR_ROWS] == 3;
+    if (!menu) {
+        g_on_send_all = false;
+        return ORIGINAL(Is, g_monnyan_hook)(list);
+    }
+    u32 *pressed = (u32 *)(GLOBAL(GOT_PAD) + PAD_PRESSED), was = *pressed;
+    bool leaving = false;
+    if (g_on_send_all && (was & PAD_A)) {
+        bool full;
+        u32 sent = monnyan_send_all(list, &full);
+        leaving = monnyan_empty(list);
+        forge_log(LOG_INFO, "field-qol: sent %u Meownster Hunters slots to the Item Box%s", sent,
+                  leaving ? ", leaving" : ", the box is full");
+        if (leaving) { // (as the game does after the last slot: Done, which the A then closes)
+            FN(Event, MONNYAN_EVENT)(list, MN_EV, MN_EV_EMPTY, 0);
+            FN(MenuSet, MENU_SET)(uio, MN_ROWS_DONE, 1, 6);
+            cursor[CURSOR_ROW] = 2, *(u16 *)(cursor + CURSOR_PAGE) = 0;
+            *(u32 *)(list + MN_STATE) = MN_DONE;
+            g_on_send_all = false;
+        } else {
+            *pressed = was & ~PAD_A; // (the game would open Send's grid)
+        }
+    }
+    u32 before = cursor[CURSOR_ROW];
+    u32 r = ORIGINAL(Is, g_monnyan_hook)(list);
+    *pressed = was;
+    if (leaving || *(u32 *)(list + MN_STATE) != MN_MENU) {
+        g_on_send_all = false;
+        return r;
+    }
+    track_cursor(cursor, before, was);
     return r;
 }
 
-// The rows: the added one on the reward screen's three-row menu with Send second
+// Hunters for Hire: Send to the Item Box as the game's (an item with data, BOX_HAS_ROOM, BOX_ADD), one sound for all.
+// Its menu closes the screen on A when the list is empty, from any row: Send all leaves it the A then.
+static bool gh_empty(u32 ui) {
+    const u32 *l = (const u32 *)(ui + GH_LIST);
+    const u16 *slots = (const u16 *)l[0];
+    for (u32 i = 0; slots && i < l[1]; i++)
+        if (slots[2 * i]) return false;
+    return true;
+}
+
+static u32 gh_send_all(u32 ui, bool *full) {
+    u32 *l = (u32 *)(ui + GH_LIST), box = GLOBAL(GOT_BOX), items = GLOBAL(GOT_ITEMS), sent = 0;
+    u16 *slots = (u16 *)l[0];
+    *full = false;
+    for (u32 i = 0; slots && i < l[1]; i++) {
+        u16 *slot = slots + 2 * i;
+        if (!slot[0] || !FN(Data, ITEM_DATA)(items, slot[0])) continue;
+        if (!FN(Is2, BOX_HAS_ROOM)(box, slot[0])) { *full = true; break; }
+        s32 left = 0;
+        FN(BoxAdd, BOX_ADD)(box, slot[0], (s16)slot[1], 0, &left);
+        if (left < 1) slot[0] = 0, left = 0;
+        slot[1] = (u16)left;
+        sent++;
+    }
+    if (sent || *full) FN(Sound, UI_SOUND)(0, *full ? SOUND_FULL : SOUND_SENT);
+    *(u8 *)(ui + GH_REDRAW) = 1;
+    return sent;
+}
+
+static u32 gh_hook(u32 ui) {
+    u32 uio = FN(Component, UI_COMPONENT)(ui, GH_UIO_INDEX);
+    if (uio) g_gh_uio = uio; // (before the screen's first frame draws its rows)
+    u8 *cursor = (u8 *)(ui + GH_CURSOR);
+    bool menu = g_send_all && uio && uio == g_menu_uio && *(u32 *)(ui + GH_STATE) == GH_MENU &&
+                cursor[CURSOR_ROWS] == 3;
+    if (!menu) {
+        g_on_send_all = false;
+        return ORIGINAL(Is, g_gh_hook)(ui);
+    }
+    u32 *pressed = (u32 *)(GLOBAL(GOT_PAD) + PAD_PRESSED), was = *pressed;
+    bool leaving = false;
+    if (g_on_send_all && (was & PAD_A)) {
+        bool full;
+        u32 sent = gh_send_all(ui, &full);
+        leaving = gh_empty(ui);
+        forge_log(LOG_INFO, "field-qol: sent %u Hunters for Hire slots to the Item Box%s", sent,
+                  leaving ? ", leaving" : ", the box is full");
+        if (leaving) g_on_send_all = false; // (the game closes the screen on this A)
+        else *pressed = was & ~PAD_A;
+    }
+    u32 before = cursor[CURSOR_ROW];
+    u32 r = ORIGINAL(Is, g_gh_hook)(ui);
+    *pressed = was;
+    if (leaving || *(u32 *)(ui + GH_STATE) != GH_MENU) {
+        g_on_send_all = false;
+        return r;
+    }
+    track_cursor(cursor, before, was);
+    return r;
+}
+
+// The trade cart's Claim Items (Neko): every cell of the three carts' inboxes to the Item Box as its Send does (room
+// for the whole quantity, BOX_PUT, the cell emptied), then the inbox saved and drawn once, with one sound.
+static bool g_trade_row; // (its menu has the fourth row: the layout from tools/make_arcs.py)
+
+static bool trade_empty(void) {
+    u32 items = GLOBAL(GOT_ITEMS);
+    for (u32 cart = 0; cart < TRADE_CARTS; cart++) {
+        u32 c = FN(Is2, TRADE_CART)(items, cart);
+        if (!c) continue;
+        const u16 *cell = (const u16 *)(c + CART_CELLS);
+        for (u32 i = 0; i < CART_CELL_COUNT; i++)
+            if (cell[2 * i]) return false;
+    }
+    return true;
+}
+
+static u32 trade_send_all(u32 ui, bool *full) {
+    u32 items = GLOBAL(GOT_ITEMS), box = GLOBAL(GOT_BOX), sent = 0;
+    *full = false;
+    for (u32 cart = 0; cart < TRADE_CARTS; cart++) {
+        u32 c = FN(Is2, TRADE_CART)(items, cart);
+        if (!c) continue;
+        u16 *cell = (u16 *)(c + CART_CELLS);
+        for (u32 i = 0; i < CART_CELL_COUNT; i++) {
+            u16 item = cell[2 * i];
+            s16 qty = (s16)cell[2 * i + 1];
+            if (!item) continue;
+            if ((s32)FN(Is2, BOX_HAS_ROOM)(box, item) < qty) { *full = true; continue; }
+            FN(Method4, BOX_PUT)(box, item, (u32)(s32)qty, 0);
+            cell[2 * i] = cell[2 * i + 1] = 0;
+            sent++;
+        }
+    }
+    if (sent) {
+        FN(Method, TRADE_CHANGED)(items);
+        FN(Is2, TRADE_REDRAW)(ui, 1);
+    }
+    if (sent || *full) FN(Sound, UI_SOUND)(0, *full ? SOUND_FULL : SOUND_SENT);
+    return sent;
+}
+
+static u32 trade_hook(u32 ui) {
+    u8 *cursor = (u8 *)(ui + TRADE_CURSOR);
+    bool menu = g_send_all && g_trade_row && *(u8 *)(ui + TRADE_SUBSTATE) == 0 && cursor[CURSOR_ROWS] == 3;
+    if (!menu) {
+        g_on_send_all = false;
+        return ORIGINAL(Is, g_trade_hook)(ui);
+    }
+    u32 *pad = (u32 *)(ui + TRADE_PAD), was = *pad;
+    bool leaving = false;
+    if (g_on_send_all && (was & PAD_A) && !trade_empty()) { // (with nothing to claim, the A goes to Send, greyed)
+        bool full;
+        u32 sent = trade_send_all(ui, &full);
+        leaving = trade_empty();
+        forge_log(LOG_INFO, "field-qol: sent %u trade cart slots to the Item Box%s", sent,
+                  leaving ? ", leaving" : ", the box is full");
+        if (leaving) {
+            *pad = PAD_B; // (the game's B closes Claim Items)
+            g_on_send_all = false;
+        } else {
+            *pad = was & ~PAD_A; // (the game would open Send's grid)
+        }
+    }
+    u32 before = cursor[CURSOR_ROW];
+    u32 r = ORIGINAL(Is, g_trade_hook)(ui);
+    *pad = was;
+    if (leaving || *(u8 *)(ui + TRADE_SUBSTATE) != 0) {
+        g_on_send_all = false;
+        return r;
+    }
+    track_cursor(cursor, before, was);
+    return r;
+}
+
+// Its menu: Send all after Send (on the third row), Sell Items & Exit on the fourth, the highlight on the row the
+// player sees. Turning the option off draws the game's rows again.
+static void trade_menu_hook(u32 uio) {
+    static bool was_ours;
+    u32 gui = *(u32 *)(uio + UIO_GUI);
+    g_trade_row = gui && *(u32 *)(gui + GUI_INSTANCES) > TM_ROW_FOURTH;
+    bool ours = g_send_all && g_trade_row;
+    if (ours != was_ours) *(u32 *)(uio + TM_FLAGS) |= 1 | 4 | 8;
+    u32 flags = *(u32 *)(uio + TM_FLAGS);
+    ORIGINAL(Method, g_trade_menu_hook)(uio);
+    if (!g_trade_row) return;
+    if (!ours) {
+        if (was_ours) FN(SetInt3, INST_VISIBLE)(uio, TM_ROW_FOURTH, 0);
+        was_ours = false;
+        return;
+    }
+    was_ours = true;
+    bool nothing = *(u32 *)(uio + TM_MODE) == 1;
+    if (flags & 4) {
+        FN(SetText, UIO_SET_TEXT)(uio, TM_ROW_THIRD, ROW_OBJECT, SEND_ALL_TEXT);
+        FN(SetInt, UIO_SET_LOOK)(uio, TM_ROW_THIRD, ROW_OBJECT,
+                                 FN(Is2, LOOK_OF)(GLOBAL(GOT_LOOKS), nothing ? LOOK_GREYED : 0));
+        FN(MsgSet, MSG_SET)(uio, TM_ROW_FOURTH, ROW_OBJECT, 0, 1, nothing ? TM_MSG_EXIT : TM_MSG_SELL);
+        FN(SetInt, UIO_SET_LOOK)(uio, TM_ROW_FOURTH, ROW_OBJECT, FN(Is2, LOOK_OF)(GLOBAL(GOT_LOOKS), 0));
+    }
+    u32 cursor = *(u32 *)(uio + TM_CURSOR);
+    if (flags & 8) // (the fourth row as the game's third: shown with three entries)
+        FN(SetInt3, INST_VISIBLE)(uio, TM_ROW_FOURTH, cursor && *(u16 *)(cursor + CURSOR_COUNT) > 2);
+    if (cursor) {
+        float spacing = FN(GetY, GUI_GET_Y)(gui, TM_SPACING);
+        u32 row = *(u8 *)(cursor + CURSOR_ROW); // (Send is its second row: Send all and Sell one lower)
+        u32 shown = g_on_send_all ? 2 : row >= 2 ? row + 1 : row;
+        FN(SetY, GUI_SET_Y)(gui, TM_HIGHLIGHT, spacing * (float)shown);
+    }
+}
+
+// The rows: the added one after Send, on a three-row menu with Send second (the reward screen's sections, Meownster
+// Hunters, Hunters for Hire) or the appraisal's two rows (Send to Boxes, Sell Items & Exit)
 static void rows_hook(u32 uio, u32 list, u32 flag) {
     ORIGINAL(Rows, g_rows_hook)(uio, list, flag);
     if (!has_fourth_row(uio)) return;
     u32 entries = *(u32 *)list, count = *(u32 *)(list + 4), mode = *(u32 *)(uio + UIO_MODE);
-    bool ours = g_send_all && flag && entries && count == 3 && uio == g_result_uio &&
-                mode < 32 && (RESULT_MODES >> mode & 1) &&
-                *(u16 *)(entries + 12 + 6) == MSG_RESULT && *(u16 *)(entries + 12 + 8) == MSG_SEND;
+    bool known = uio == g_result_uio || uio == g_monnyan_uio || uio == g_gh_uio;
+    bool three = count == 3 && mode < 32 && (RESULT_MODES >> mode & 1) && entries &&
+                 *(u16 *)(entries + 12 + 6) == MSG_RESULT && *(u16 *)(entries + 12 + 8) == MSG_SEND;
+    bool two = count == 2 && mode == MODE_APPRAISAL && uio == g_result_uio && entries;
+    bool ours = g_send_all && flag && known && (three || two);
     if (!ours) {
-        if (g_menu_uio == uio) g_menu_uio = 0;
+        if ((uio == g_monnyan_uio || uio == g_gh_uio) && g_send_all && flag && entries && count == 3) // (why it stays)
+            forge_log(LOG_INFO, "field-qol: %s menu kept (mode %u, second %u:%u)",
+                      uio == g_gh_uio ? "Hunters for Hire" : "Meownster Hunters", mode,
+                      *(u16 *)(entries + 12 + 6), *(u16 *)(entries + 12 + 8));
+        if (g_menu_uio == uio) {
+            g_menu_uio = 0;
+            if (count < 3) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_THIRD, ROW_OBJECT, 0); // (the appraisal's third row)
+        }
         FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_FOURTH, ROW_OBJECT, 0);
         return;
     }
-    g_menu_uio = uio;
-    const char *third = FN(EntryText, ENTRY_TEXT)(entries + 24);
-    FN(SetText, UIO_SET_TEXT)(uio, ROW_FOURTH, ROW_OBJECT, third);
-    FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_FOURTH, ROW_OBJECT, 1);
-    FN(SetText, UIO_SET_TEXT)(uio, ROW_THIRD, ROW_OBJECT, SEND_ALL_TEXT);
+    g_menu_uio = uio, g_menu_rows = count, g_send_row = two ? 0 : 1;
+    if (three) g_cursor_extended = false;
+    // the rows after Send move one down, "Send all" goes after Send
+    for (u32 k = count - 1; k > g_send_row; k--) {
+        FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[k + 1], ROW_OBJECT, FN(EntryText, ENTRY_TEXT)(entries + 12 * k));
+        FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[k + 1], ROW_OBJECT, 1);
+    }
+    FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, SEND_ALL_TEXT);
+    FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, 1);
+    if (count == 2) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_FOURTH, ROW_OBJECT, 0);
 }
 
-// The rows' looks (enabled, highlighted) for the four rows the player sees
+// The rows' looks (enabled, highlighted) for the rows the player sees
 static void looks_hook(u32 uio, u32 enabled, u32 row) {
     ORIGINAL(Looks, g_looks_hook)(uio, enabled, row);
-    if (uio != g_menu_uio || *(u32 *)(enabled + 4) < 3) return;
+    if (uio != g_menu_uio || *(u32 *)(enabled + 4) < g_menu_rows) return;
     const u8 *on = *(const u8 **)enabled;
     u32 shown = shown_row(row);
     Look look = FN(Look, ROW_LOOK);
     SetInt set = FN(SetInt, UIO_SET_LOOK);
-    set(uio, ROW_SEND, ROW_OBJECT, look(on[1], shown == 1, 0, 0));
-    set(uio, ROW_THIRD, ROW_OBJECT, look(on[1], shown == 2, 0, 0)); // (Send all is open when Send is)
-    set(uio, ROW_FOURTH, ROW_OBJECT, look(on[2], shown == 3, 0, 0));
+    for (u32 k = 0; k < g_menu_rows; k++) {
+        u32 v = k <= g_send_row ? k : k + 1;
+        set(uio, ROW_INSTANCES[v], ROW_OBJECT, look(on[k], shown == v, 0, 0));
+    }
+    set(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, look(on[g_send_row], shown == g_send_row + 1, 0, 0));
 }
 
 // The highlight bar, on the row the player sees
@@ -674,6 +1172,17 @@ EXPORT void forge_onInit(void) {
     bool drawn = hook(&g_rows_hook, MENU_ROWS, rows_hook) & hook(&g_looks_hook, MENU_LOOKS, looks_hook) &
                  hook(&g_reward_update_hook, REWARD_UPDATE, reward_update_hook);
     g_rewards_hooked = drawn && hook(&g_section_hook, RESULT_SECTION, section_hook);
+    if (drawn && !(hook(&g_monnyan_init_hook, MONNYAN_INIT, monnyan_init_hook) &
+                   hook(&g_monnyan_hook, MONNYAN_UPDATE, monnyan_hook)))
+        forge_log(LOG_WARN, "field-qol: a Meownster Hunters hook FAILED, no Send all there");
+    if (g_rewards_hooked && !(hook(&g_appraisal_help_hook, APPRAISAL_HELP, appraisal_help_hook) &&
+                              hook(&g_appraisal_hook, APPRAISAL_UPDATE, appraisal_hook)))
+        forge_log(LOG_WARN, "field-qol: the appraisal hook FAILED, no Send all there");
+    if (drawn && !(hook(&g_trade_menu_hook, TRADE_MENU_DRAW, trade_menu_hook) &&
+                   hook(&g_trade_hook, TRADE_CLAIM, trade_hook)))
+        forge_log(LOG_WARN, "field-qol: a trade hook FAILED, no Send all at the trade cart");
+    if (drawn && !hook(&g_gh_hook, GH_UPDATE, gh_hook))
+        forge_log(LOG_WARN, "field-qol: the Hunters for Hire hook FAILED, no Send all there");
     if (g_rewards_hooked && !hook(&g_sound_hook, UI_SOUND, sound_hook))
         forge_log(LOG_WARN, "field-qol: sound hook FAILED, Send all plays a sound per slot");
     forge_log(g_rewards_hooked ? LOG_INFO : LOG_WARN, "field-qol: %s",
@@ -682,6 +1191,7 @@ EXPORT void forge_onInit(void) {
 
 EXPORT void forge_onUpdate(float dt) {
     (void)dt;
+    g_since_r = forge_input_isDown(BUTTON_R) ? 0 : g_since_r + (g_since_r <= SINGLE_FRAMES);
     if (g_main) prompt_next();
 }
 
@@ -711,6 +1221,7 @@ EXPORT void forge_onImGuiRender(void) {
     igTextUnformatted("Gathering", NULL);
     if (!g_gather_hooked) igTextUnformatted("Hook failed: gathering as usual (see log.txt).", NULL);
     igCheckbox("One press gathers the whole spot", &g_gather_all);
+    igCheckbox("Hold R while gathering: a single item", &g_hold_single);
     igTextUnformatted("Eggs and other carried items still take a press each.", NULL);
     igCheckbox("One message per item (\"Iron Ore x3\")", &g_merge);
     igCheckbox("One notification per spot", &g_one_box);

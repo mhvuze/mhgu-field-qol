@@ -12,7 +12,7 @@
 # Needs an arm-none-eabi GCC and binutils (Homebrew's arm-none-eabi-gcc; CROSS=<prefix> for another) and Python 3.
 set -e
 cd "$(dirname "$0")"
-VERSION=0.6.0
+VERSION=0.7.0
 CROSS=${CROSS:-arm-none-eabi-}
 RECOMP=${RECOMP:-"$HOME/Library/Application Support/MHGURecomp"}
 OUT=out
