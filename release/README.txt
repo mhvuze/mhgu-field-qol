@@ -39,6 +39,10 @@ can be turned off there. They're all on by default.
 
 Uninstall
 ---------
-Delete the "field-qol" folder.
+Delete the "field-qol" folder. This restores everything: the layout tool never
+changes your game files, it only writes copies into this folder.
+
+To keep gathering and delivering but get the game's original menus back, delete
+only the .arc files in field-qol/romfs/nativeNX/ (the layout tool's output).
 
 Source code, issues and more details: https://github.com/mhvuze/mhgu-field-qol

@@ -55,7 +55,14 @@ on by default, and the switches reset each time the game starts.
 4. Start the game. `log.txt` should list three `field-qol:` lines: `one press gathers the whole spot`,
    `pouch deliveries work anywhere` and `Send all to Item Box & Exit on the reward screen`.
 
-To uninstall, delete the `field-qol` folder, or turn the mod off in the recomp's Mods tab.
+## Uninstall
+
+Delete the `field-qol` folder, or turn the mod off in the recomp's Mods tab. That restores everything: the layout tool
+never changes your game files, it only writes new copies into the mod's own folder, which the recomp applies on top of
+the game's data.
+
+To keep the gathering and delivery features but get the game's original menus back, delete just the `.arc` files in
+`field-qol/romfs/nativeNX/` (the layout tool's output). The plugin then leaves the menus alone.
 
 ## Compatibility
 
