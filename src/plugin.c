@@ -3,7 +3,7 @@
 // Three features, each with a switch in Forge's menu (Insert > Field QoL), all on by default:
 //   - Gathering: one press at a gathering spot gathers everything the spot has left.
 //   - Delivery:  the Item Pouch's Deliver works anywhere on the map, not only in the base camp.
-//   - Rewards:   "Send all to Item Box & Exit" on the quest reward screen.
+//   - Rewards:   "Send all to the Item Box & Exit" on the quest reward screen.
 //
 // The plugin runs in the recomp's interpreter as AArch32 code and calls the game's own functions. Addresses are
 // offsets into the game's main module (MHGU 1.4.0); at runtime they are added to forge_mem_getMainTextAddr(). Each
@@ -174,7 +174,13 @@
 #define TM_CURSOR 0x50
 #define TM_ROW_SEND 6
 #define TM_ROW_THIRD 7
-#define TM_ROW_FOURTH 119
+#define TM_ROW_FOURTH 119         // (tools/make_arcs.py; without it, a runtime row: g_tm_row4)
+#define TM_INSTANCES 119          // shop_trade's own instances
+#define TM_ROW_PARENT 4           // Nul_mes_sub
+#define TM_LINE 10                // Anm_line_sub
+#define TM_LINE_PARENT 8          // Nul_line_sub
+#define TM_WINDOW 3               // Anm_Window_sub (7.6, its flow 7.45)
+#define TM_CART_INFO 29           // Nul_main0 (275)
 #define TM_HIGHLIGHT 18
 #define TM_SPACING 14
 #define TM_MSG_SELL 0x1C
@@ -208,6 +214,10 @@
 #define LINE_PARENT 9             // Nul_line_sub
 #define WINDOW 4                  // Anm_Window_sub
 #define TIME_LEFT 26              // Nul_sub1
+#define APPRAISAL_BOX 48          // Nul_sub3 (the appraisal's Time Left and box slots)
+#define ROW_THIRD_Y 108.0f
+#define ROW_FOURTH_Y 142.0f
+#define ROW_STEP_Y 34.0f
 #define ROW_OBJECT 1              // a row's text object
 #define INST_SPACING 0x10         // its y is the spacing of the rows
 #define INST_HIGHLIGHT 0x2F       // the highlight bar
@@ -590,7 +600,7 @@ static u32 clear_account_hook(void) {
 // Sending plays a sound per slot. The game's sound manager starts each one on its own voice, so several in one frame
 // add up to a louder sound: during a Send all, each sound plays only once.
 
-static const char SEND_ALL_TEXT[] = "Send all to Item Box & Exit";
+static const char SEND_ALL_TEXT[] = "Send all to the Item Box & Exit";
 static u32 g_menu_uio;     // the menu showing the added row (0: none)
 static u32 g_result_uio;   // the reward screen's menu
 static u32 g_monnyan_uio;  // Meownster Hunters' reward menu
@@ -614,7 +624,8 @@ static u32 sound_hook(u32 kind, u32 id) {
 static u32 ROW_INSTANCES[4]; // (below)
 typedef u32 (*CreateInst)(u32 gui, u32 resource, u32 animation, u32 parent, u32 dti);
 typedef void (*SetF)(u32 instance, float v);
-static u32 g_rt_gui, g_rt_line; // (research) the layout given runtime rows, and its separator
+static u32 g_rt_gui, g_rt_line, g_rt_row3; // (research) the layout given runtime rows, its separator, and a third
+                                           // row for the appraisal (whose state hides the layout's)
 static bool g_rt;               // the fourth row is a runtime one
 
 static u32 inst_obj(u32 gui, u32 i) { return *(u32 *)(*(u32 *)(gui + GUI_INST_ARRAY) + 4 * i); }
@@ -642,26 +653,42 @@ static bool has_fourth_row(u32 uio) {
     }
     if (*(u32 *)(gui + GUI_INSTANCES) <= ROW_FOURTH - 60) return false; // (not the reward layout)
     if (gui != g_rt_gui || !*(u32 *)(gui + GUI_EXTRA_COUNT)) {
-        u32 row = clone_inst(gui, ROW_THIRD, ROW_PARENT, 142.0f);
+        u32 row = clone_inst(gui, ROW_THIRD, ROW_PARENT, ROW_FOURTH_Y);
         if (!row) return false;
-        g_rt_line = clone_inst(gui, LINE, LINE_PARENT, 34.0f);
+        g_rt_line = clone_inst(gui, LINE, LINE_PARENT, ROW_STEP_Y);
+        g_rt_row3 = clone_inst(gui, ROW_THIRD, ROW_PARENT, ROW_THIRD_Y);
         g_rt_gui = gui, ROW_INSTANCES[3] = row;
     }
     g_rt = true;
     return true;
 }
 
-// (research) the window one row taller and Time Left one row lower, as tools/make_arcs.py makes the layout
-static void runtime_layout(u32 gui, bool four) {
-    u32 window = inst_obj(gui, WINDOW);
-    float scl = *(float *)(window + INST_SCL_Y), want = scl;
-    if (four && scl > 7.4f && scl < 7.6f) want = 9.2f;
-    if (!four && scl > 9.1f && scl < 9.3f) want = 7.5f;
-    if (want != scl) FN(SetF, INST_SET_SCL_Y)(window, want);
-    float y = FN(GetY, GUI_GET_Y)(gui, TIME_LEFT), y_want = y;
-    if (four && y > 221.0f && y < 223.0f) y_want = 256.0f;
-    if (!four && y > 255.0f && y < 257.0f) y_want = 222.0f;
-    if (y_want != y) FN(SetY, GUI_SET_Y)(gui, TIME_LEFT, y_want);
+// Moves instance i's y (or, with scale, its y scale) from `from` to `to` when it's at `from` (the layout's own value)
+static void nudge(u32 gui, u32 i, bool scale, float from, float to) {
+    if (scale) {
+        u32 obj = inst_obj(gui, i);
+        float v = *(float *)(obj + INST_SCL_Y);
+        if (v > from - 0.02f && v < from + 0.02f) FN(SetF, INST_SET_SCL_Y)(obj, to);
+    } else {
+        float v = FN(GetY, GUI_GET_Y)(gui, i);
+        if (v > from - 0.5f && v < from + 0.5f) FN(SetY, GUI_SET_Y)(gui, i, to);
+    }
+}
+
+// (research) the window one row taller and the box under it one row lower, as tools/make_arcs.py makes the layout:
+// for a three-row menu (1) or the appraisal's two rows (2); the last one's changes undone when it's gone
+enum { RT_NONE, RT_FOUR, RT_APPRAISAL };
+static void runtime_layout(u32 gui, u32 mode) {
+    static u32 applied;
+    if (mode != applied) {
+        if (applied == RT_FOUR) nudge(gui, WINDOW, true, 9.2f, 7.5f), nudge(gui, TIME_LEFT, false, 256.0f, 222.0f);
+        if (applied == RT_APPRAISAL)
+            nudge(gui, WINDOW, true, 7.6f, 5.9f), nudge(gui, APPRAISAL_BOX, false, 222.0f, 188.0f);
+        applied = mode;
+    }
+    if (mode == RT_FOUR) nudge(gui, WINDOW, true, 7.5f, 9.2f), nudge(gui, TIME_LEFT, false, 222.0f, 256.0f);
+    if (mode == RT_APPRAISAL)
+        nudge(gui, WINDOW, true, 5.9f, 7.6f), nudge(gui, APPRAISAL_BOX, false, 188.0f, 222.0f);
 }
 
 // The menu showing the added row: its rows (3, or 2 for the appraisal) and the row of Send, which "Send all" follows.
@@ -1100,17 +1127,48 @@ static u32 trade_hook(u32 ui) {
 
 // Its menu: Send all after Send (on the third row), Sell Items & Exit on the fourth, the highlight on the row the
 // player sees. Turning the option off draws the game's rows again.
+static u32 g_tm_gui, g_tm_row4 = TM_ROW_FOURTH, g_tm_line; // (research) runtime rows for the trade's layout
+
+// The trade's layout with the fourth row: the one from tools/make_arcs.py, or runtime copies of row 3 and the separator
+static bool trade_row(u32 gui) {
+    if (!gui) return false;
+    u32 n = *(u32 *)(gui + GUI_INSTANCES);
+    if (n > TM_ROW_FOURTH) return g_tm_row4 = TM_ROW_FOURTH, g_tm_line = 0, g_tm_gui = 0, true;
+    if (n != TM_INSTANCES) return false;
+    if (gui != g_tm_gui || !*(u32 *)(gui + GUI_EXTRA_COUNT)) {
+        u32 row = clone_inst(gui, TM_ROW_THIRD, TM_ROW_PARENT, 140.0f);
+        if (!row) return false;
+        g_tm_line = clone_inst(gui, TM_LINE, TM_LINE_PARENT, ROW_STEP_Y);
+        g_tm_gui = gui, g_tm_row4 = row;
+    }
+    return true;
+}
+
+// (research) runtime rows: the window one row taller and Cart Info one row lower while ours, as before otherwise
+static void trade_layout(u32 uio, u32 gui, bool ours) {
+    if (!g_tm_line) return;
+    FN(SetInt3, INST_VISIBLE)(uio, g_tm_line, ours);
+    if (ours) {
+        nudge(gui, TM_WINDOW, true, 7.45f, 9.15f), nudge(gui, TM_WINDOW, true, 7.6f, 9.3f);
+        nudge(gui, TM_CART_INFO, false, 275.0f, 309.0f);
+    } else {
+        nudge(gui, TM_WINDOW, true, 9.15f, 7.45f), nudge(gui, TM_WINDOW, true, 9.3f, 7.6f);
+        nudge(gui, TM_CART_INFO, false, 309.0f, 275.0f);
+    }
+}
+
 static void trade_menu_hook(u32 uio) {
     static bool was_ours;
     u32 gui = *(u32 *)(uio + UIO_GUI);
-    g_trade_row = gui && *(u32 *)(gui + GUI_INSTANCES) > TM_ROW_FOURTH;
+    g_trade_row = trade_row(gui);
     bool ours = g_send_all && g_trade_row;
     if (ours != was_ours) *(u32 *)(uio + TM_FLAGS) |= 1 | 4 | 8;
     u32 flags = *(u32 *)(uio + TM_FLAGS);
     ORIGINAL(Method, g_trade_menu_hook)(uio);
     if (!g_trade_row) return;
+    trade_layout(uio, gui, ours);
     if (!ours) {
-        if (was_ours) FN(SetInt3, INST_VISIBLE)(uio, TM_ROW_FOURTH, 0);
+        if (was_ours) FN(SetInt3, INST_VISIBLE)(uio, g_tm_row4, 0);
         was_ours = false;
         return;
     }
@@ -1120,12 +1178,12 @@ static void trade_menu_hook(u32 uio) {
         FN(SetText, UIO_SET_TEXT)(uio, TM_ROW_THIRD, ROW_OBJECT, SEND_ALL_TEXT);
         FN(SetInt, UIO_SET_LOOK)(uio, TM_ROW_THIRD, ROW_OBJECT,
                                  FN(Is2, LOOK_OF)(GLOBAL(GOT_LOOKS), nothing ? LOOK_GREYED : 0));
-        FN(MsgSet, MSG_SET)(uio, TM_ROW_FOURTH, ROW_OBJECT, 0, 1, nothing ? TM_MSG_EXIT : TM_MSG_SELL);
-        FN(SetInt, UIO_SET_LOOK)(uio, TM_ROW_FOURTH, ROW_OBJECT, FN(Is2, LOOK_OF)(GLOBAL(GOT_LOOKS), 0));
+        FN(MsgSet, MSG_SET)(uio, g_tm_row4, ROW_OBJECT, 0, 1, nothing ? TM_MSG_EXIT : TM_MSG_SELL);
+        FN(SetInt, UIO_SET_LOOK)(uio, g_tm_row4, ROW_OBJECT, FN(Is2, LOOK_OF)(GLOBAL(GOT_LOOKS), 0));
     }
     u32 cursor = *(u32 *)(uio + TM_CURSOR);
     if (flags & 8) // (the fourth row as the game's third: shown with three entries)
-        FN(SetInt3, INST_VISIBLE)(uio, TM_ROW_FOURTH, cursor && *(u16 *)(cursor + CURSOR_COUNT) > 2);
+        FN(SetInt3, INST_VISIBLE)(uio, g_tm_row4, cursor && *(u16 *)(cursor + CURSOR_COUNT) > 2);
     if (cursor) {
         float spacing = FN(GetY, GUI_GET_Y)(gui, TM_SPACING);
         u32 row = *(u8 *)(cursor + CURSOR_ROW); // (Send is its second row: Send all and Sell one lower)
@@ -1155,10 +1213,17 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
             if (count < 3) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_THIRD, ROW_OBJECT, 0); // (the appraisal's third row)
         }
         FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[3], ROW_OBJECT, 0);
-        if (g_rt && g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, 0);
+        if (g_rt) {
+            if (g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, 0);
+            if (g_rt_row3) FN(SetInt, UIO_SET_VISIBLE)(uio, g_rt_row3, ROW_OBJECT, 0);
+        }
+        ROW_INSTANCES[2] = ROW_THIRD;
         return;
     }
     g_menu_uio = uio, g_menu_rows = count, g_send_row = two ? 0 : 1;
+    // the appraisal's state hides the layout's third row: with runtime rows, a runtime one stands in for it
+    ROW_INSTANCES[2] = g_rt && two && g_rt_row3 ? g_rt_row3 : ROW_THIRD;
+    if (g_rt && g_rt_row3 && !two) FN(SetInt, UIO_SET_VISIBLE)(uio, g_rt_row3, ROW_OBJECT, 0);
     if (three) g_cursor_extended = false;
     // the rows after Send move one down, "Send all" goes after Send
     for (u32 k = count - 1; k > g_send_row; k--) {
@@ -1168,7 +1233,7 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
     FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, SEND_ALL_TEXT);
     FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, 1);
     if (count == 2) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[3], ROW_OBJECT, 0);
-    if (g_rt && g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, count == 3);
+    if (g_rt && g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, 1);
 }
 
 // The rows' looks (enabled, highlighted) for the rows the player sees
@@ -1190,7 +1255,8 @@ static void looks_hook(u32 uio, u32 enabled, u32 row) {
 static void reward_update_hook(u32 uio) {
     ORIGINAL(Method, g_reward_update_hook)(uio);
     u32 gui = *(u32 *)(uio + UIO_GUI), cursor = *(u32 *)(uio + UIO_CURSOR);
-    if (g_rt && gui && gui == g_rt_gui) runtime_layout(gui, uio == g_menu_uio && g_menu_rows == 3);
+    if (g_rt && gui && gui == g_rt_gui)
+        runtime_layout(gui, uio != g_menu_uio ? RT_NONE : g_menu_rows == 3 ? RT_FOUR : RT_APPRAISAL);
     if (uio != g_menu_uio) return;
     if (!gui || !cursor) return;
     float spacing = FN(GetY, GUI_GET_Y)(gui, INST_SPACING);
@@ -1218,7 +1284,7 @@ static const Setting SETTINGS[] = {
     {"one_notification", "One notification", "One notification for the whole spot.", &g_one_box},
     {"full_pouch", "Replacement prompt last", "Gather everything, then ask what to replace.", &g_roll_all},
     {"deliver_anywhere", "Deliver anywhere", "Item Pouch Deliver works away from camp.", &g_deliver_anywhere},
-    {"send_all", "Send all to box", "Adds \"Send all to Item Box & Exit\".", &g_send_all},
+    {"send_all", "Send all to box", "Adds \"Send all to the Item Box & Exit\".", &g_send_all},
 };
 #define SETTING_COUNT ((u32)(sizeof SETTINGS / sizeof *SETTINGS))
 
@@ -1461,7 +1527,7 @@ EXPORT void forge_onInit(void) {
     if (g_rewards_hooked && !hook(&g_sound_hook, UI_SOUND, sound_hook))
         forge_log(LOG_WARN, "field-qol: sound hook FAILED, Send all plays a sound per slot");
     forge_log(g_rewards_hooked ? LOG_INFO : LOG_WARN, "field-qol: %s",
-              g_rewards_hooked ? "Send all to Item Box & Exit on the reward screen" : "a rewards hook FAILED, no Send all");
+              g_rewards_hooked ? "Send all to the Item Box & Exit on the reward screen" : "a rewards hook FAILED, no Send all");
 }
 
 EXPORT void forge_onUpdate(float dt) {
@@ -1518,7 +1584,7 @@ EXPORT void forge_onImGuiRender(void) {
 
     igTextUnformatted("Rewards", NULL);
     if (!g_rewards_hooked) igTextUnformatted("Hook failed: no Send all (see log.txt).", NULL);
-    igCheckbox("\"Send all to Item Box & Exit\" on the reward screen", &g_send_all);
+    igCheckbox("\"Send all to the Item Box & Exit\" on the reward screen", &g_send_all);
 
     igTextUnformatted("Saved to fieldqol.ini next to your save. With Purple-lib: Options > Mod Options.", NULL);
     igTreePop();
