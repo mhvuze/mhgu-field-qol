@@ -194,6 +194,20 @@
 #define ROW_SEND 7                // the second row (Send to the Item Box)
 #define ROW_THIRD 8               // the third row, which the plugin turns into "Send all..."
 #define ROW_FOURTH 89             // the fourth row, added by tools/make_arcs.py
+// (research) without the layout from tools/make_arcs.py, the fourth row and its separator are made at runtime
+#define GUI_INST_ARRAY 0xF8       // cGUI: the layout's instances (objects)
+#define GUI_CREATE_INST 0x54501C  // cGUI: a new instance (gui, resource, animation, parent, type DTI) -> its index
+#define GUI_EXTRA_COUNT 0x288     // cGUI: instances made at runtime
+#define INST_RESOURCE 0xD0        // cGUIInstAnimation: ResourceId (-1: the layout's own), AnimationId
+#define INST_ANIMATION 0xD4
+#define INST_SCL_X 0xA0           // cGUIInstance: scale (x, y)
+#define INST_SCL_Y 0xA4
+#define INST_SET_SCL_Y 0xA368DC   // cGUIInstance: set the y scale (instance, s0)
+#define ROW_PARENT 5              // Nul_mes_sub
+#define LINE 11                   // Anm_line_sub
+#define LINE_PARENT 9             // Nul_line_sub
+#define WINDOW 4                  // Anm_Window_sub
+#define TIME_LEFT 26              // Nul_sub1
 #define ROW_OBJECT 1              // a row's text object
 #define INST_SPACING 0x10         // its y is the spacing of the rows
 #define INST_HIGHLIGHT 0x2F       // the highlight bar
@@ -597,9 +611,57 @@ static u32 sound_hook(u32 kind, u32 id) {
     return ORIGINAL(Sound, g_sound_hook)(kind, id);
 }
 
+static u32 ROW_INSTANCES[4]; // (below)
+typedef u32 (*CreateInst)(u32 gui, u32 resource, u32 animation, u32 parent, u32 dti);
+typedef void (*SetF)(u32 instance, float v);
+static u32 g_rt_gui, g_rt_line; // (research) the layout given runtime rows, and its separator
+static bool g_rt;               // the fourth row is a runtime one
+
+static u32 inst_obj(u32 gui, u32 i) { return *(u32 *)(*(u32 *)(gui + GUI_INST_ARRAY) + 4 * i); }
+
+// A runtime copy of layout instance src (same type, resource and animation) under parent, at y
+static u32 clone_inst(u32 gui, u32 src, u32 parent, float y) {
+    u32 obj = inst_obj(gui, src);
+    if (!obj) return 0;
+    u32 dti = ((u32(*)(u32))(*(u32 *)(*(u32 *)obj + 0x14)))(obj);
+    u32 idx = FN(CreateInst, GUI_CREATE_INST)(gui, *(u32 *)(obj + INST_RESOURCE), *(u32 *)(obj + INST_ANIMATION),
+                                             parent, dti);
+    FN(SetY, GUI_SET_Y)(gui, idx, y);
+    forge_log(LOG_INFO, "field-qol: research: copy of instance %u -> %u (resource %d, animation %u, scale %d/%d %%)",
+              src, idx, (int)*(u32 *)(obj + INST_RESOURCE), *(u32 *)(obj + INST_ANIMATION),
+              (int)(*(float *)(obj + INST_SCL_X) * 100), (int)(*(float *)(obj + INST_SCL_Y) * 100));
+    return idx;
+}
+
 static bool has_fourth_row(u32 uio) {
     u32 gui = *(u32 *)(uio + UIO_GUI);
-    return gui && *(u32 *)(gui + GUI_INSTANCES) > ROW_FOURTH; // (the layout from tools/make_arcs.py is loaded)
+    if (!gui) return false;
+    if (*(u32 *)(gui + GUI_INSTANCES) > ROW_FOURTH) { // (the layout from tools/make_arcs.py is loaded)
+        ROW_INSTANCES[3] = ROW_FOURTH, g_rt = false;
+        return true;
+    }
+    if (*(u32 *)(gui + GUI_INSTANCES) <= ROW_FOURTH - 60) return false; // (not the reward layout)
+    if (gui != g_rt_gui || !*(u32 *)(gui + GUI_EXTRA_COUNT)) {
+        u32 row = clone_inst(gui, ROW_THIRD, ROW_PARENT, 142.0f);
+        if (!row) return false;
+        g_rt_line = clone_inst(gui, LINE, LINE_PARENT, 34.0f);
+        g_rt_gui = gui, ROW_INSTANCES[3] = row;
+    }
+    g_rt = true;
+    return true;
+}
+
+// (research) the window one row taller and Time Left one row lower, as tools/make_arcs.py makes the layout
+static void runtime_layout(u32 gui, bool four) {
+    u32 window = inst_obj(gui, WINDOW);
+    float scl = *(float *)(window + INST_SCL_Y), want = scl;
+    if (four && scl > 7.4f && scl < 7.6f) want = 9.2f;
+    if (!four && scl > 9.1f && scl < 9.3f) want = 7.5f;
+    if (want != scl) FN(SetF, INST_SET_SCL_Y)(window, want);
+    float y = FN(GetY, GUI_GET_Y)(gui, TIME_LEFT), y_want = y;
+    if (four && y > 221.0f && y < 223.0f) y_want = 256.0f;
+    if (!four && y > 255.0f && y < 257.0f) y_want = 222.0f;
+    if (y_want != y) FN(SetY, GUI_SET_Y)(gui, TIME_LEFT, y_want);
 }
 
 // The menu showing the added row: its rows (3, or 2 for the appraisal) and the row of Send, which "Send all" follows.
@@ -607,7 +669,7 @@ static bool has_fourth_row(u32 uio) {
 // cursor is given a third row instead (two rows wrap, so up and down couldn't be told apart), which the plugin maps.
 static u32 g_menu_rows = 3, g_send_row = 1;
 static bool g_cursor_extended;
-static const u32 ROW_INSTANCES[] = {ROW_TAKE, ROW_SEND, ROW_THIRD, ROW_FOURTH};
+static u32 ROW_INSTANCES[4] = {ROW_TAKE, ROW_SEND, ROW_THIRD, ROW_FOURTH};
 
 // The row the player sees highlighted: the game's rows with "Send all" after Send
 static u32 shown_row(u32 game_row) {
@@ -1092,7 +1154,8 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
             g_menu_uio = 0;
             if (count < 3) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_THIRD, ROW_OBJECT, 0); // (the appraisal's third row)
         }
-        FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_FOURTH, ROW_OBJECT, 0);
+        FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[3], ROW_OBJECT, 0);
+        if (g_rt && g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, 0);
         return;
     }
     g_menu_uio = uio, g_menu_rows = count, g_send_row = two ? 0 : 1;
@@ -1104,7 +1167,8 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
     }
     FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, SEND_ALL_TEXT);
     FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, 1);
-    if (count == 2) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_FOURTH, ROW_OBJECT, 0);
+    if (count == 2) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[3], ROW_OBJECT, 0);
+    if (g_rt && g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, count == 3);
 }
 
 // The rows' looks (enabled, highlighted) for the rows the player sees
@@ -1125,8 +1189,9 @@ static void looks_hook(u32 uio, u32 enabled, u32 row) {
 // The highlight bar, on the row the player sees
 static void reward_update_hook(u32 uio) {
     ORIGINAL(Method, g_reward_update_hook)(uio);
-    if (uio != g_menu_uio) return;
     u32 gui = *(u32 *)(uio + UIO_GUI), cursor = *(u32 *)(uio + UIO_CURSOR);
+    if (g_rt && gui && gui == g_rt_gui) runtime_layout(gui, uio == g_menu_uio && g_menu_rows == 3);
+    if (uio != g_menu_uio) return;
     if (!gui || !cursor) return;
     float spacing = FN(GetY, GUI_GET_Y)(gui, INST_SPACING);
     FN(SetY, GUI_SET_Y)(gui, INST_HIGHLIGHT, spacing * (float)shown_row(*(u8 *)(cursor + CURSOR_ROW)));
