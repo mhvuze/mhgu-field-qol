@@ -82,7 +82,12 @@
 #define MSG_SET 0x56FC58          // cUIO: an object's text from a message (uio, instance, object, 0, 1, message)
 #define INST_VISIBLE 0x56E528     // cUIO: show or hide an instance (uio, instance, on)
 #define LOOK_OF 0x560E90          // a text look (the GOT_LOOKS object, kind): 0 as usual, 0xB greyed
-#define GOT_LOOKS 0x1838BD8
+#define GOT_LOOKS 0x1838BD8       // (also the screens' manager: SCREEN(it, 0) is the screen holding the help line)
+#define HELP_SET 0x65E5BC         // the help line: show a message (flags, a, table, message, x, format, args...)
+#define SCREEN 0x55D2B4           // (GOT_LOOKS object, 0) -> the screen whose component 4 is the help line
+#define HELP_UIO_INDEX 4
+#define HELP_TEXT_VFUNC 0x64      // the help line's cUIO: show a string (uio, text, 0)
+#define HELP_LAST_MESSAGE 0x56    // (u16) the message it shows, which a request for the same is skipped for
 #define GH_UPDATE 0x710A64        // uUIGuestHunterResult (Hunters for Hire's results): every frame (ui)
 #define MENU_SET 0x624664         // cUIOReward: set the menu's rows and looks (uio, rows, ...)
 #define UI_COMPONENT 0x65CB3C     // uUIBase: one of its cUIO (ui, index); the reward screen's menu is index 0
@@ -284,7 +289,7 @@ static u32 g_main; // the game's main module
 static ForgeHook g_gather_hook, g_add_hook, g_add_quest_hook, g_message_hook, g_play_dead_hook, g_prompt_hook;
 static ForgeHook g_deliverable_hook, g_clear_account_hook;
 static ForgeHook g_section_hook, g_rows_hook, g_looks_hook, g_reward_update_hook, g_sound_hook;
-static ForgeHook g_monnyan_init_hook, g_monnyan_hook, g_gh_hook, g_appraisal_hook, g_appraisal_help_hook, g_trade_hook, g_trade_menu_hook;
+static ForgeHook g_help_hook, g_monnyan_init_hook, g_monnyan_hook, g_gh_hook, g_appraisal_hook, g_appraisal_help_hook, g_trade_hook, g_trade_menu_hook;
 static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 
 // The switches in Forge's menu
@@ -602,6 +607,10 @@ static u32 clear_account_hook(void) {
 
 static const char SEND_ALL_TEXT[] = "Send all to the Item Box & Exit";
 static const char SEND_ALL_BOXES_TEXT[] = "Send all to Boxes & Exit"; // (the appraisal, beside its "Send to Boxes")
+// Send all's help lines
+static const char HELP_SEND_ALL[] = "Send every item to your Item Box\r\nand exit.";
+static const char HELP_TRADE[] = "Send every item from your trades to\r\nthe Item Box and exit.";
+static const char HELP_APPRAISAL[] = "Send every appraised item and piece of\r\nequipment to its box and exit.";
 static u32 g_menu_uio;     // the menu showing the added row (0: none)
 static u32 g_result_uio;   // the reward screen's menu
 static u32 g_monnyan_uio;  // Meownster Hunters' reward menu
@@ -741,7 +750,8 @@ static bool section_empty(u32 ui, u32 section) {
     return true;
 }
 
-static void track_cursor(u8 *cursor, u32 before, u32 was);
+static void track_cursor(u8 *cursor, u32 before, u32 was, u32 screen, const char *help);
+static void help_show(const char *text);
 
 // The appraisal: Send to Boxes as the game does it (items to the Item Box as the other sections', items marked at
 // +0x12 to RESULT_ITEM_SPECIAL, equipment to the equipment box), every entry
@@ -849,6 +859,7 @@ static void appraisal_help_hook(u32 ui) {
     cursor[CURSOR_ROW] = row == 2 ? 1 : 0;
     ORIGINAL(Method, g_appraisal_help_hook)(ui);
     cursor[CURSOR_ROW] = row;
+    if (row == 1) help_show(HELP_APPRAISAL);
 }
 
 static u32 section_hook(u32 ui, u32 section) {
@@ -891,19 +902,66 @@ static u32 section_hook(u32 ui, u32 section) {
         return r;
     }
 
-    track_cursor(cursor, before, was);
+    track_cursor(cursor, before, was, uio, HELP_SEND_ALL);
     return r;
 }
 
-// The cursor's moves after the game's frame, with the extra row between Send (1) and the third (2)
-static void track_cursor(u8 *cursor, u32 before, u32 was) {
+// The help line. While "Send all" is highlighted it shows Send all's own line (g_help_text, per screen), whatever the
+// game asks for. The game's requests are recorded per row of its cursor, so that when the plugin puts the cursor back
+// on Send (Up from Send all: the game already moved to the first row and showed its line) Send's line is shown again.
+typedef void (*HelpSet)(u32 flags, u32 a, u32 table, u32 message, u32 x, u32 format, u32 arg0, u32 arg1);
+static u32 g_help_last[8], g_help_rows[3][8];
+static bool g_help_asked, g_help_known[3];
+static const char *g_help_text;
+static u32 g_help_screen; // (the screen the rows were recorded for)
+
+static void help_show(const char *text) {
+    u32 screen = FN(Is2, SCREEN)(GLOBAL(GOT_LOOKS), 0);
+    u32 uio = screen ? FN(Component, UI_COMPONENT)(screen, HELP_UIO_INDEX) : 0;
+    if (!uio) return;
+    ((void (*)(u32, const char *, u32))(*(u32 *)(*(u32 *)uio + HELP_TEXT_VFUNC)))(uio, text, 0);
+    *(u16 *)(uio + HELP_LAST_MESSAGE) = 0xFFFF; // (the game's next request is shown, even if it's the last one)
+}
+
+static void help_hook(u32 flags, u32 a, u32 table, u32 message, u32 x, u32 format, u32 arg0, u32 arg1) {
+    u32 args[8] = {flags, a, table, message, x, format, arg0, arg1};
+    for (u32 i = 0; i < 8; i++) g_help_last[i] = args[i];
+    g_help_asked = true;
+    if (g_on_send_all && g_help_text) {
+        help_show(g_help_text);
+        return;
+    }
+    ORIGINAL(HelpSet, g_help_hook)(flags, a, table, message, x, format, arg0, arg1);
+}
+
+static void help_again(u32 row) {
+    if (row >= 3 || !g_help_known[row]) return;
+    const u32 *h = g_help_rows[row];
+    ORIGINAL(HelpSet, g_help_hook)(h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+}
+
+// The cursor's moves after the game's frame, with the extra row between Send (1) and the third (2); screen tells the
+// screens apart (their help lines are recorded per screen), help is Send all's line there
+static void track_cursor(u8 *cursor, u32 before, u32 was, u32 screen, const char *help) {
     u32 after = cursor[CURSOR_ROW];
+    bool on = g_on_send_all;
+    if (screen != g_help_screen) {
+        g_help_screen = screen;
+        for (u32 i = 0; i < 3; i++) g_help_known[i] = false;
+    }
+    g_help_text = help;
+    if (g_help_asked && after != before && after < 3) { // (the game showed the line of the row it moved to)
+        for (u32 i = 0; i < 8; i++) g_help_rows[after][i] = g_help_last[i];
+        g_help_known[after] = true;
+    }
+    g_help_asked = false;
     if (was & PAD_B) {
         g_on_send_all = false; // (the game moved its cursor to the third row)
     } else if (g_on_send_all) {
         if (before == 1 && after == 0) { // up: back to Send
             cursor[CURSOR_ROW] = 1;
             g_on_send_all = false;
+            help_again(1);
         } else if (after != before) {    // down: the game is on its third row already
             g_on_send_all = false;
         }
@@ -913,6 +971,7 @@ static void track_cursor(u8 *cursor, u32 before, u32 was) {
     } else if (before == 2 && after == 1) { // up from the third row: stop on Send all
         g_on_send_all = true;
     }
+    if (g_on_send_all && !on && help) help_show(help);
 }
 
 // Meownster Hunters: the menu is known before the setup draws its rows
@@ -987,7 +1046,7 @@ static u32 monnyan_hook(u32 list) {
         g_on_send_all = false;
         return r;
     }
-    track_cursor(cursor, before, was);
+    track_cursor(cursor, before, was, uio, HELP_SEND_ALL);
     return r;
 }
 
@@ -1048,7 +1107,7 @@ static u32 gh_hook(u32 ui) {
         g_on_send_all = false;
         return r;
     }
-    track_cursor(cursor, before, was);
+    track_cursor(cursor, before, was, uio, HELP_SEND_ALL);
     return r;
 }
 
@@ -1122,7 +1181,7 @@ static u32 trade_hook(u32 ui) {
         g_on_send_all = false;
         return r;
     }
-    track_cursor(cursor, before, was);
+    track_cursor(cursor, before, was, ui, HELP_TRADE);
     return r;
 }
 
@@ -1520,6 +1579,8 @@ EXPORT void forge_onInit(void) {
     if (g_rewards_hooked && !(hook(&g_appraisal_help_hook, APPRAISAL_HELP, appraisal_help_hook) &&
                               hook(&g_appraisal_hook, APPRAISAL_UPDATE, appraisal_hook)))
         forge_log(LOG_WARN, "field-qol: the appraisal hook FAILED, no Send all there");
+    if (drawn && !hook(&g_help_hook, HELP_SET, help_hook))
+        forge_log(LOG_WARN, "field-qol: the help line hook FAILED, Send all shows the game's help lines");
     if (drawn && !(hook(&g_trade_menu_hook, TRADE_MENU_DRAW, trade_menu_hook) &&
                    hook(&g_trade_hook, TRADE_CLAIM, trade_hook)))
         forge_log(LOG_WARN, "field-qol: a trade hook FAILED, no Send all at the trade cart");
