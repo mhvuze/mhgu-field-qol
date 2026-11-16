@@ -22,8 +22,10 @@ stack as usual). Items at their stack limit are lost, as in the game. For items 
 "Item Pouch is full" window opens once the spot is done, one item after the other, so you choose what to replace in
 one go instead of after every press.
 
-All of a spot's messages come in one notification, with one line per item and its total (`Iron Ore x3`). A spot with
-more than 6 lines continues in a second notification.
+All of a spot's messages come in one notification, with one line per item (and its total when you gathered several,
+`Iron Ore x3`). A spot with more than 6 lines continues in a second notification.
+
+<p align="center"><img src="docs/one-notification.jpg" width="420" alt="One notification for everything a spot gave"></p>
 
 **Deliver from anywhere.** The Item Pouch's **Deliver** and **Clear out Account Items** work anywhere on the map, not
 only in the base camp. Which items can be delivered doesn't change: the quest's target items and account items, but
@@ -36,8 +38,17 @@ Item Box & Exit" under "Send to Boxes": items to the Item Box, appraised equipme
 The trade cart's Claim Items gets the same row: it sends all three carts' items to the Item Box and closes Claim Items.
 If the box fills up first, the menu stays open with what's left.
 
-Every feature can be turned on and off in Forge's menu (press **Insert** in game, then open **Field QoL**). They're all
-on by default, and the switches reset each time the game starts.
+<p align="center"><img src="docs/send-all.jpg" width="640" alt="The new row on the quest reward screen"></p>
+
+## Settings
+
+Every feature can be turned on and off, and they're all on by default. With [Purple-lib](https://gamebanana.com/mods/740376)
+(r19 or later, optional) open the start menu, then **Options > Mod Options > Field QoL**. Without it, press **Insert** in
+game for Forge's menu and open **Field QoL**. The switches are saved when you change them, in `save_0/fieldqol.ini` next
+to your save, so they stay as you set them the next time you start the game. You can edit that file while the game is
+closed.
+
+<p align="center"><img src="docs/mod-options.jpg" width="400" alt="Field QoL under Options > Mod Options"></p>
 
 ## Install
 
@@ -93,15 +104,18 @@ macOS's default `~/Library/Application Support/MHGURecomp`.
 | --- | --- |
 | `src/plugin.c` | The plugin: game addresses, hooks, and how each feature works |
 | `src/forge.h` | The part of Forge's plugin API the plugin uses |
+| `src/purplelib.h` | Purple-lib's plugin header, for the Mod Options page |
 | `src/start.S`, `build/` | NRO start code, linker script and ELF to NRO converter |
 | `tools/make_arcs.py` | Adds the "Send all" row to the reward screen's and the trade cart's menu layouts |
 | `tools/mtgui.py`, `tools/patchgui.py` | A reader and an append-only editor for MHGU GUI files |
+| `docs/` | The screenshots in this readme |
 | `release/README.txt` | The readme that goes in the release zip |
 
 ## Credits
 
 - `src/start.S`, `build/nro.ld` and `build/elf2nro.py` come from lick-mee's
   [mhgu-gathering-map](https://github.com/lick-mee/mhgu-gathering-map) (MIT).
+- `src/purplelib.h` is the header of [Purple-lib](https://gamebanana.com/mods/740376) by PurplefinNeptuna (MIT).
 - The plugin API is [Forge](https://github.com/Fexty12573/forge) by Fexty12573.
 - The GUI file tools follow Fexty12573's [mhw-gui-editor](https://github.com/Fexty12573/mhw-gui-editor).
 

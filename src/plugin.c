@@ -9,6 +9,7 @@
 // offsets into the game's main module (MHGU 1.4.0); at runtime they are added to forge_mem_getMainTextAddr(). Each
 // feature's section below explains the game code it relies on.
 #include "forge.h"
+#include "purplelib.h"
 
 #ifndef PLUGIN_VERSION
 #define PLUGIN_VERSION "dev"
@@ -266,8 +267,9 @@ static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true, g_hold_single = true;
 static bool g_deliver_anywhere = true, g_send_all = true;
 
-// The compiler may emit memset calls; there is no C library to provide one
+// The compiler may emit memset/memcpy calls; there is no C library to provide them
 void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; return d; }
+void *memcpy(void *d, const void *s, u32 n) { u8 *p = d; const u8 *q = s; while (n--) *p++ = *q++; return d; }
 
 // ================================================================== Gathering
 //
@@ -1131,6 +1133,213 @@ static void reward_update_hook(u32 uio) {
     FN(Sync, CURSOR_SYNC)(cursor, uio, INST_HIGHLIGHT);
 }
 
+// ================================================================== Settings: the file, Purple-lib's page
+
+static char *put(char *q, const char *s) { while (*s) *q++ = *s++; return q; }
+
+// The switches, in the order of Purple-lib's page rows. Each is on by default.
+typedef struct {
+    const char *key;   // in fieldqol.ini
+    const char *name;  // the Mod Options row
+    const char *help;  // its help line
+    bool *value;
+} Setting;
+
+static const Setting SETTINGS[] = {
+    {"gather_all", "One-press gather", "One press gathers all a spot has left.", &g_gather_all},
+    {"hold_single", "Hold R: single gather", "Hold R as you start gathering to gather\r\nonly a single item instead of all.",
+     &g_hold_single},
+    {"merge_messages", "One message per item", "\"Iron Ore x3\" instead of three lines.", &g_merge},
+    {"one_notification", "One notification", "One notification for the whole spot.", &g_one_box},
+    {"full_pouch", "Replacement prompt last", "Gather everything, then ask what to replace.", &g_roll_all},
+    {"deliver_anywhere", "Deliver anywhere", "Item Pouch Deliver works away from camp.", &g_deliver_anywhere},
+    {"send_all", "Send all to box", "Adds \"Send all to Item Box & Exit\".", &g_send_all},
+};
+#define SETTING_COUNT ((u32)(sizeof SETTINGS / sizeof *SETTINGS))
+
+static bool g_prev[SETTING_COUNT];  // the values the last frame saw: a change starts the save countdown
+static u32 g_save_delay;            // frames until a change is saved (a held step changes every frame)
+static bool g_loaded;               // the file was read, or the save data had none
+
+// ---------------------------------------------------------------- the settings file
+
+// In the game's save data, next to the save (save_0/fieldqol.ini), as Forge's and other plugins' settings are. The save
+// data is mounted for each read or write and unmounted (which commits) right after, as Forge's API asks.
+#define FILE_NAME "fieldqol.ini"
+static char g_path[64];
+
+// Mounts the save data and makes g_path; false when it can't be mounted (yet)
+static bool mount(void) {
+    if (!forge_fs_mountSaveData()) return false;
+    const char *mp = forge_fs_getSaveDataMountPoint();
+    u32 i = 0;
+    for (; mp && mp[i] && i < sizeof g_path - sizeof ":/" FILE_NAME; i++) g_path[i] = mp[i];
+    for (const char *t = ":/" FILE_NAME; *t; t++) g_path[i++] = *t;
+    g_path[i] = 0;
+    return true;
+}
+
+static bool is_space(char c) { return c == ' ' || c == '\t'; }
+
+// "gather_all = 0" lines (0 off, 1 on); anything else (comments, unknown keys, other values) is skipped
+static void parse(const char *s, const char *end) {
+    while (s < end) {
+        const char *line = s;
+        while (s < end && *s != '\n') s++;
+        const char *eol = s++;
+        while (line < eol && is_space(*line)) line++;
+        for (u32 k = 0; k < SETTING_COUNT; k++) {
+            const char *p = line, *key = SETTINGS[k].key;
+            while (*key && p < eol && *p == *key) p++, key++;
+            if (*key) continue;
+            while (p < eol && is_space(*p)) p++;
+            if (p == eol || *p++ != '=') continue;
+            while (p < eol && is_space(*p)) p++;
+            if (p < eol && (*p == '0' || *p == '1')) *SETTINGS[k].value = *p == '1';
+        }
+    }
+}
+
+static void remember(void) {
+    for (u32 k = 0; k < SETTING_COUNT; k++) g_prev[k] = *SETTINGS[k].value;
+}
+
+// Reads the settings file; false when the save data couldn't be mounted (tried again later)
+static bool load(void) {
+    static char buf[1024];
+    FsFile f;
+    s64 size = 0;
+    if (!mount()) return false;
+    u32 n = 0;
+    bool found = fs_open(&f, g_path, FS_READ) == 0;
+    if (found) {
+        if (fs_size(&size, f) == 0 && size > 0) {
+            n = size < (s64)sizeof buf ? (u32)size : sizeof buf;
+            if (fs_read(f, 0, buf, n) != 0) n = 0;
+        }
+        fs_close(f);
+    }
+    forge_fs_unmountSaveData();
+    parse(buf, buf + n);
+    remember();
+    forge_log(LOG_INFO, "field-qol: %s", found ? "settings loaded from " FILE_NAME : "no " FILE_NAME " yet, all on");
+    return true;
+}
+
+static void save(void) {
+    static char buf[1024];
+    char *q = put(buf, "; Field QoL " PLUGIN_VERSION ": 1 is on, 0 is off. Change them in game (Options > Mod Options, or\n"
+                       "; Forge's menu) or here while the game is closed.\n");
+    for (u32 k = 0; k < SETTING_COUNT; k++) {
+        q = put(q, SETTINGS[k].key);
+        q = put(q, " = ");
+        *q++ = *SETTINGS[k].value ? '1' : '0';
+        *q++ = '\n';
+    }
+    u32 n = (u32)(q - buf);
+
+    FsFile f;
+    if (!mount()) {
+        forge_log(LOG_WARN, "field-qol: could not mount the save data, settings not saved");
+        return;
+    }
+    bool ok = fs_open(&f, g_path, FS_WRITE | FS_APPEND) == 0;
+    if (!ok) {
+        fs_create(g_path, 0);
+        ok = fs_open(&f, g_path, FS_WRITE | FS_APPEND) == 0;
+    }
+    if (ok) {
+        static const FsWriteOption flush = {1};
+        ok = fs_set_size(f, n) == 0 && fs_write(f, 0, buf, n, &flush) == 0;
+        fs_close(f);
+    }
+    forge_fs_unmountSaveData();
+    forge_log(ok ? LOG_INFO : LOG_WARN, "field-qol: settings %s", ok ? "saved" : "NOT saved");
+}
+
+// Called every frame: a change from either menu (Forge's checkboxes, Purple-lib's rows) is saved shortly after it stops
+static void settings_update(void) {
+    static u32 retry;
+    if (!g_loaded) {
+        if (++retry >= 60) retry = 0, g_loaded = load();  // the save data wasn't mountable at init
+        return;
+    }
+    bool changed = false;
+    for (u32 k = 0; k < SETTING_COUNT; k++)
+        if (*SETTINGS[k].value != g_prev[k]) g_prev[k] = *SETTINGS[k].value, changed = true;
+    if (changed) g_save_delay = 30;
+    else if (g_save_delay && !--g_save_delay) save();
+}
+
+// ---------------------------------------------------------------- Purple-lib: Options > Mod Options
+
+static const char *const ON_OFF[] = {"Off", "On"};
+static const char *const RESET[] = {"Reset"};
+
+static const char *title(void *ctx, u32 language) { (void)ctx, (void)language; return "Field QoL"; }
+
+static bool row(void *ctx, u32 language, u32 index, PurpleLibOptionRow *out) {
+    (void)ctx, (void)language;
+    if (index < SETTING_COUNT) {
+        out->name = SETTINGS[index].name;
+        out->help = SETTINGS[index].help;
+        out->labels = ON_OFF;
+        out->label_count = 2;
+        return true;
+    }
+    if (index == SETTING_COUNT) {
+        out->name = "Defaults";
+        out->help = "Turns everything on again.";
+        out->kind = PURPLELIB_ROW_ACTION;
+        out->labels = RESET;
+        out->label_count = 1;
+        return true;
+    }
+    return false;
+}
+
+static u32 get(void *ctx, u32 index) { (void)ctx; return index < SETTING_COUNT && *SETTINGS[index].value; }
+
+static void set(void *ctx, u32 index, u32 value) {
+    (void)ctx;
+    if (index < SETTING_COUNT) *SETTINGS[index].value = value != 0;
+}
+
+static void action(void *ctx, u32 index) {
+    (void)ctx;
+    if (index != SETTING_COUNT) return;
+    for (u32 k = 0; k < SETTING_COUNT; k++) *SETTINGS[k].value = true;
+}
+
+static void closed(void *ctx) { (void)ctx; g_save_delay = 1; }  // (the window closed: save without the wait)
+
+static const char *const PAGES[] = {
+    "Each row turns one Field QoL feature\r\non or off. Changes apply at once.",
+    "They are saved to fieldqol.ini next\r\nto your save. Defaults turns every\r\nfeature on again.",
+};
+static const char *help_page(void *ctx, u32 language, u32 index) {
+    (void)ctx, (void)language;
+    return index < sizeof PAGES / sizeof *PAGES ? PAGES[index] : NULL;
+}
+
+static const PurpleLibOptions OPTIONS = {
+    sizeof(PurpleLibOptions), NULL, title, SETTING_COUNT + 1, row, get, set, closed, NULL, action,
+};
+static const PurpleLibHelp SET_HELP = {
+    sizeof(PurpleLibHelp), NULL, 0, sizeof PAGES / sizeof *PAGES, title, help_page, NULL,
+};
+
+EXPORT void purplelib_on_register(const PurpleLibApi *api) {
+    if (!api || api->version < PURPLELIB_API_VERSION) {
+        forge_log(LOG_WARN, "field-qol: Purple-lib is too old, no Mod Options page");
+        return;
+    }
+    bool options = api->add_options(&OPTIONS);
+    if (options) api->add_set_help(&OPTIONS, &SET_HELP);
+    forge_log(options ? LOG_INFO : LOG_WARN, "field-qol: %s",
+              options ? "settings under Options > Mod Options" : "Purple-lib refused the Mod Options page");
+}
+
 // ================================================================== Forge
 
 EXPORT void forge_onLoad(ForgePluginInfo *info) {
@@ -1149,6 +1358,7 @@ static bool hook(ForgeHook *h, u32 target, void *detour) {
 
 EXPORT void forge_onInit(void) {
     g_main = forge_mem_getMainTextAddr();
+    g_loaded = load();  // (the switches, before any hook reads them)
 
     // Gathering: the pouch results first, as the gather relies on them; without the message hook, a line per item
     bool pouch = hook(&g_add_hook, PLAYER_ADD, add_hook) & hook(&g_add_quest_hook, PLAYER_ADD_QUEST, add_quest_hook);
@@ -1192,6 +1402,7 @@ EXPORT void forge_onInit(void) {
 EXPORT void forge_onUpdate(float dt) {
     (void)dt;
     g_since_r = forge_input_isDown(BUTTON_R) ? 0 : g_since_r + (g_since_r <= SINGLE_FRAMES);
+    settings_update();
     if (g_main) prompt_next();
 }
 
@@ -1201,7 +1412,6 @@ EXPORT void forge_onImGuiInit(void *ctx, void *alloc, void *freefn) {
     igSetAllocatorFunctions(alloc, freefn, NULL);
 }
 
-static char *put(char *q, const char *s) { while (*s) *q++ = *s++; return q; }
 
 // Writes a number in decimal without dividing (division would need libgcc)
 static char *put_u(char *q, u32 v) {
@@ -1245,5 +1455,6 @@ EXPORT void forge_onImGuiRender(void) {
     if (!g_rewards_hooked) igTextUnformatted("Hook failed: no Send all (see log.txt).", NULL);
     igCheckbox("\"Send all to Item Box & Exit\" on the reward screen", &g_send_all);
 
+    igTextUnformatted("Saved to fieldqol.ini next to your save. With Purple-lib: Options > Mod Options.", NULL);
     igTreePop();
 }

@@ -34,8 +34,14 @@ Install
 
 Settings
 --------
-Press Insert in game to open Forge's menu, then open "Field QoL". Every feature
-can be turned off there. They're all on by default.
+Every feature can be turned off, and they're all on by default.
+With Purple-lib (r19 or later, optional: https://gamebanana.com/mods/740376):
+open the start menu, then Options > Mod Options > Field QoL.
+Without it: press Insert in game to open Forge's menu, then open "Field QoL".
+
+Changes are saved as you make them, in save_0/fieldqol.ini next to your save (by
+default in the recomp's "save" folder), so they stay for the next start. You can
+edit that file while the game is closed.
 
 Uninstall
 ---------
