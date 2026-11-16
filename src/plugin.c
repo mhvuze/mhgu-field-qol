@@ -608,7 +608,8 @@ static u32 clear_account_hook(void) {
 static const char SEND_ALL_TEXT[] = "Send all to the Item Box & Exit";
 static const char SEND_ALL_BOXES_TEXT[] = "Send all to Boxes & Exit"; // (the appraisal, beside its "Send to Boxes")
 // Send all's help lines
-static const char HELP_SEND_ALL[] = "Send every item to your Item Box\r\nand exit.";
+static const char HELP_SEND_ALL[] = // (with the reward screens' own hint, as their lines have it)
+    "Send every item to your Item Box and exit.\r\n<COL FF0000FF>(X Button: Show/hide menu)</COL>";
 static const char HELP_TRADE[] = "Send every item from your trades to\r\nthe Item Box and exit.";
 static const char HELP_APPRAISAL[] = "Send every appraised item and piece of\r\nequipment to its box and exit.";
 static u32 g_menu_uio;     // the menu showing the added row (0: none)
