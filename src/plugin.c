@@ -601,6 +601,7 @@ static u32 clear_account_hook(void) {
 // add up to a louder sound: during a Send all, each sound plays only once.
 
 static const char SEND_ALL_TEXT[] = "Send all to the Item Box & Exit";
+static const char SEND_ALL_BOXES_TEXT[] = "Send all to Boxes & Exit"; // (the appraisal, beside its "Send to Boxes")
 static u32 g_menu_uio;     // the menu showing the added row (0: none)
 static u32 g_result_uio;   // the reward screen's menu
 static u32 g_monnyan_uio;  // Meownster Hunters' reward menu
@@ -1230,7 +1231,7 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
         FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[k + 1], ROW_OBJECT, FN(EntryText, ENTRY_TEXT)(entries + 12 * k));
         FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[k + 1], ROW_OBJECT, 1);
     }
-    FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, SEND_ALL_TEXT);
+    FN(SetText, UIO_SET_TEXT)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, two ? SEND_ALL_BOXES_TEXT : SEND_ALL_TEXT);
     FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[g_send_row + 1], ROW_OBJECT, 1);
     if (count == 2) FN(SetInt, UIO_SET_VISIBLE)(uio, ROW_INSTANCES[3], ROW_OBJECT, 0);
     if (g_rt && g_rt_line) FN(SetInt3, INST_VISIBLE)(uio, g_rt_line, 1);
