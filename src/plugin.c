@@ -294,7 +294,7 @@ static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 
 // The switches in Forge's menu
 static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true, g_hold_single = true;
-static bool g_deliver_anywhere = true, g_send_all = true;
+static bool g_deliver_anywhere = true, g_send_all = true, g_auto_sort = false;
 
 // The compiler may emit memset/memcpy calls; there is no C library to provide them
 void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; return d; }
@@ -1325,27 +1325,102 @@ static void reward_update_hook(u32 uio) {
     FN(Sync, CURSOR_SYNC)(cursor, uio, INST_HIGHLIGHT);
 }
 
+// ================================================================== Auto-sort (off by default)
+//
+// The Item Pouch's Sort (its top face button, then Yes) calls POUCH_SORT on the pouch. With the switch on, the plugin
+// calls it whenever items were added to the pouch (an item's total in it went up), without the game's question and
+// sound, once no menu is open and no "Item Pouch is full" window is waiting (those point at slots by number).
+#define POUCH_SORT 0x19D740       // sort the Item Pouch (the GOT_POUCH object), as its Sort does after Yes
+#define GOT_POUCH 0x183A828
+#define POUCH_SLOT 0x558514       // a pouch slot {u16 item, u16 quantity} (the GOT_POUCH_SLOTS object, 0-39)
+#define GOT_POUCH_SLOTS 0x1838DA8
+#define POUCH_SLOTS 40
+
+static u16 g_pouch_item[POUCH_SLOTS], g_pouch_qty[POUCH_SLOTS];
+static bool g_pouch_known, g_sort_pending;
+
+static bool pouch_read(u16 *item, u16 *qty) {
+    u32 slots = GLOBAL(GOT_POUCH_SLOTS);
+    if (!slots) return false;
+    for (u32 i = 0; i < POUCH_SLOTS; i++) {
+        const u16 *s = (const u16 *)FN(Is2, POUCH_SLOT)(slots, i);
+        if (!s) return false;
+        item[i] = s[0], qty[i] = item[i] ? s[1] : 0;
+    }
+    return true;
+}
+
+static u32 pouch_total(const u16 *item, const u16 *qty, u16 id) {
+    u32 n = 0;
+    for (u32 i = 0; i < POUCH_SLOTS; i++)
+        if (item[i] == id) n += qty[i];
+    return n;
+}
+
+// The screens that show the pouch's slots and put items in it (the Item Box, the quest's supply box, the shared box):
+// their updates (vtable slot 9) note the frame, and the sort waits until none has run for a few frames
+#define ITEM_BOX_UPDATE 0x713DB8
+#define SUPPLY_BOX_UPDATE 0x679EB4
+#define SHARE_BOX_UPDATE 0x66D588
+#define BOX_QUIET_FRAMES 10
+static ForgeHook g_item_box_hook, g_supply_box_hook, g_share_box_hook;
+static u32 g_frame, g_box_frame;
+
+static u32 item_box_hook(u32 ui) { g_box_frame = g_frame; return ORIGINAL(Is, g_item_box_hook)(ui); }
+static u32 supply_box_hook(u32 ui) { g_box_frame = g_frame; return ORIGINAL(Is, g_supply_box_hook)(ui); }
+static u32 share_box_hook(u32 ui) { g_box_frame = g_frame; return ORIGINAL(Is, g_share_box_hook)(ui); }
+
+static bool menu_open(void) { return g_frame - g_box_frame < BOX_QUIET_FRAMES; }
+
+// Every frame: note added items, sort when nothing points at the pouch's slots
+static void auto_sort_update(void) {
+    if (!g_auto_sort) {
+        g_pouch_known = g_sort_pending = false;
+        return;
+    }
+    u16 item[POUCH_SLOTS], qty[POUCH_SLOTS];
+    if (!pouch_read(item, qty)) return;
+    if (g_pouch_known)
+        for (u32 i = 0; i < POUCH_SLOTS && !g_sort_pending; i++)
+            if (item[i] && pouch_total(item, qty, item[i]) > pouch_total(g_pouch_item, g_pouch_qty, item[i]))
+                g_sort_pending = true;
+    for (u32 i = 0; i < POUCH_SLOTS; i++) g_pouch_item[i] = item[i], g_pouch_qty[i] = qty[i];
+    g_pouch_known = true;
+    if (!g_sort_pending || g_spot || g_lefts || menu_open()) return;
+    u32 prompt = FN(Query, PROMPT_ITEM)();
+    if ((prompt && *(u8 *)(prompt - PROMPT_PENDING)) || FN(Query, PROMPT_OPEN)()) return;
+    u32 pouch = GLOBAL(GOT_POUCH);
+    if (!pouch) return;
+    FN(Method, POUCH_SORT)(pouch);
+    g_sort_pending = false;
+    forge_log(LOG_INFO, "field-qol: the Item Pouch auto-sorted");
+    pouch_read(g_pouch_item, g_pouch_qty); // (the sorted order is no change)
+}
+
 // ================================================================== Settings: the file, Purple-lib's page
 
 static char *put(char *q, const char *s) { while (*s) *q++ = *s++; return q; }
 
-// The switches, in the order of Purple-lib's page rows. Each is on by default.
+// The switches, in the order of Purple-lib's page rows, with their defaults (Defaults puts them back)
 typedef struct {
     const char *key;   // in fieldqol.ini
     const char *name;  // the Mod Options row
     const char *help;  // its help line
     bool *value;
+    bool on;           // the default
 } Setting;
 
 static const Setting SETTINGS[] = {
-    {"gather_all", "One-press gather", "One press gathers all a spot has left.", &g_gather_all},
+    {"gather_all", "One-press gather", "One press gathers all a spot has left.", &g_gather_all, true},
     {"hold_single", "Hold R: single gather", "Hold R as you start gathering to gather\r\nonly a single item instead of all.",
-     &g_hold_single},
-    {"merge_messages", "One message per item", "\"Iron Ore x3\" instead of three lines.", &g_merge},
-    {"one_notification", "One notification", "One notification for the whole spot.", &g_one_box},
-    {"full_pouch", "Replacement prompt last", "Gather everything, then ask what to replace.", &g_roll_all},
-    {"deliver_anywhere", "Deliver anywhere", "Item Pouch Deliver works away from camp.", &g_deliver_anywhere},
-    {"send_all", "Send all to box", "Adds \"Send all to the Item Box & Exit\".", &g_send_all},
+     &g_hold_single, true},
+    {"merge_messages", "One message per item", "\"Iron Ore x3\" instead of three lines.", &g_merge, true},
+    {"one_notification", "One notification", "One notification for the whole spot.", &g_one_box, true},
+    {"full_pouch", "Replacement prompt last", "Gather everything, then ask what to replace.", &g_roll_all, true},
+    {"deliver_anywhere", "Deliver anywhere", "Item Pouch Deliver works away from camp.", &g_deliver_anywhere, true},
+    {"send_all", "Send all to box", "Adds \"Send all to the Item Box & Exit\".", &g_send_all, true},
+    {"auto_sort", "Auto-sort Item Pouch", "Sorts the Item Pouch whenever items are\r\nadded to it, as its Sort does.",
+     &g_auto_sort, false},
 };
 #define SETTING_COUNT ((u32)(sizeof SETTINGS / sizeof *SETTINGS))
 
@@ -1414,7 +1489,7 @@ static bool load(void) {
     forge_fs_unmountSaveData();
     parse(buf, buf + n);
     remember();
-    forge_log(LOG_INFO, "field-qol: %s", found ? "settings loaded from " FILE_NAME : "no " FILE_NAME " yet, all on");
+    forge_log(LOG_INFO, "field-qol: %s", found ? "settings loaded from " FILE_NAME : "no " FILE_NAME " yet, the defaults");
     return true;
 }
 
@@ -1481,7 +1556,7 @@ static bool row(void *ctx, u32 language, u32 index, PurpleLibOptionRow *out) {
     }
     if (index == SETTING_COUNT) {
         out->name = "Defaults";
-        out->help = "Turns everything on again.";
+        out->help = "Puts every switch back to its default.";
         out->kind = PURPLELIB_ROW_ACTION;
         out->labels = RESET;
         out->label_count = 1;
@@ -1500,14 +1575,14 @@ static void set(void *ctx, u32 index, u32 value) {
 static void action(void *ctx, u32 index) {
     (void)ctx;
     if (index != SETTING_COUNT) return;
-    for (u32 k = 0; k < SETTING_COUNT; k++) *SETTINGS[k].value = true;
+    for (u32 k = 0; k < SETTING_COUNT; k++) *SETTINGS[k].value = SETTINGS[k].on;
 }
 
 static void closed(void *ctx) { (void)ctx; g_save_delay = 1; }  // (the window closed: save without the wait)
 
 static const char *const PAGES[] = {
     "Each row turns one Field QoL feature\r\non or off. Changes apply at once.",
-    "They are saved to fieldqol.ini next\r\nto your save. Defaults turns every\r\nfeature on again.",
+    "They are saved to fieldqol.ini next\r\nto your save. Defaults puts every\r\nswitch back to its default.",
 };
 static const char *help_page(void *ctx, u32 language, u32 index) {
     (void)ctx, (void)language;
@@ -1580,6 +1655,10 @@ EXPORT void forge_onInit(void) {
     if (g_rewards_hooked && !(hook(&g_appraisal_help_hook, APPRAISAL_HELP, appraisal_help_hook) &&
                               hook(&g_appraisal_hook, APPRAISAL_UPDATE, appraisal_hook)))
         forge_log(LOG_WARN, "field-qol: the appraisal hook FAILED, no Send all there");
+    // Auto-sort: the screens it waits for
+    if (!(hook(&g_item_box_hook, ITEM_BOX_UPDATE, item_box_hook) & hook(&g_supply_box_hook, SUPPLY_BOX_UPDATE, supply_box_hook) &
+          hook(&g_share_box_hook, SHARE_BOX_UPDATE, share_box_hook)))
+        forge_log(LOG_WARN, "field-qol: a box screen hook FAILED, auto-sort may sort while a box is open");
     if (drawn && !hook(&g_help_hook, HELP_SET, help_hook))
         forge_log(LOG_WARN, "field-qol: the help line hook FAILED, Send all shows the game's help lines");
     if (drawn && !(hook(&g_trade_menu_hook, TRADE_MENU_DRAW, trade_menu_hook) &&
@@ -1593,8 +1672,10 @@ EXPORT void forge_onInit(void) {
               g_rewards_hooked ? "Send all to the Item Box & Exit on the reward screen" : "a rewards hook FAILED, no Send all");
 }
 
+
 EXPORT void forge_onUpdate(float dt) {
     (void)dt;
+    if (g_main) g_frame++, auto_sort_update();
     g_since_r = forge_input_isDown(BUTTON_R) ? 0 : g_since_r + (g_since_r <= SINGLE_FRAMES);
     settings_update();
     if (g_main) prompt_next();
@@ -1644,6 +1725,9 @@ EXPORT void forge_onImGuiRender(void) {
     if (!g_deliver_hooked) igTextUnformatted("Hook failed: deliveries may stay camp only (see log.txt).", NULL);
     igCheckbox("Deliver from the Item Pouch anywhere", &g_deliver_anywhere);
     igTextUnformatted("Deliver and Clear out Account Items, for what the game allows.", NULL);
+
+    igTextUnformatted("Item Pouch", NULL);
+    igCheckbox("Auto-sort the Item Pouch when items are added (off by default)", &g_auto_sort);
 
     igTextUnformatted("Rewards", NULL);
     if (!g_rewards_hooked) igTextUnformatted("Hook failed: no Send all (see log.txt).", NULL);

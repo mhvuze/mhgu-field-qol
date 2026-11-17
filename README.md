@@ -40,6 +40,10 @@ If the box fills up first, the menu stays open with what's left.
 
 <p align="center"><img src="docs/send-all.jpg" width="640" alt="The new row on the quest reward screen"></p>
 
+**Auto-sort the Item Pouch** (off by default). Whenever items are added to the Item Pouch, it's sorted the way its
+own Sort does it (the top face button in the pouch), without the question and the sound. While a box screen is open
+(the Item Box, the supply box), the sort waits until you close it. Sorting by hand still asks as usual.
+
 ## Settings
 
 Every feature can be turned on and off, and they're all on by default. With [Purple-lib](https://gamebanana.com/mods/740376)
