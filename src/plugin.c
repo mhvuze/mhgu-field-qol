@@ -709,6 +709,9 @@ static u32 g_menu_rows = 3, g_send_row = 1;
 static bool g_cursor_extended;
 static u32 ROW_INSTANCES[4] = {ROW_TAKE, ROW_SEND, ROW_THIRD, ROW_FOURTH};
 
+// A menu left through Send all (Hunters for Hire closes with its A): it keeps Send all highlighted while it fades
+static u32 g_exit_uio;
+
 // The row the player sees highlighted: the game's rows with "Send all" after Send
 static u32 shown_row(u32 game_row) {
     if (g_cursor_extended) return game_row;
@@ -1098,7 +1101,7 @@ static u32 gh_hook(u32 ui) {
         leaving = gh_empty(ui);
         forge_log(LOG_INFO, "field-qol: sent %u Hunters for Hire slots to the Item Box%s", sent,
                   leaving ? ", leaving" : ", the box is full");
-        if (leaving) g_on_send_all = false; // (the game closes the screen on this A)
+        if (leaving) g_on_send_all = false, g_exit_uio = uio; // (the game closes the screen on this A)
         else *pressed = was & ~PAD_A;
     }
     u32 before = cursor[CURSOR_ROW];
@@ -1282,6 +1285,7 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
         return;
     }
     g_menu_uio = uio, g_menu_rows = count, g_send_row = two ? 0 : 1;
+    if (uio == g_exit_uio) g_exit_uio = 0; // (set up again: the game's cursor counts)
     // the appraisal's state hides the layout's third row: with runtime rows, a runtime one stands in for it
     ROW_INSTANCES[2] = g_rt && two && g_rt_row3 ? g_rt_row3 : ROW_THIRD;
     if (g_rt && g_rt_row3 && !two) FN(SetInt, UIO_SET_VISIBLE)(uio, g_rt_row3, ROW_OBJECT, 0);
@@ -1302,7 +1306,7 @@ static void looks_hook(u32 uio, u32 enabled, u32 row) {
     ORIGINAL(Looks, g_looks_hook)(uio, enabled, row);
     if (uio != g_menu_uio || *(u32 *)(enabled + 4) < g_menu_rows) return;
     const u8 *on = *(const u8 **)enabled;
-    u32 shown = shown_row(row);
+    u32 shown = uio == g_exit_uio ? g_send_row + 1 : shown_row(row);
     Look look = FN(Look, ROW_LOOK);
     SetInt set = FN(SetInt, UIO_SET_LOOK);
     for (u32 k = 0; k < g_menu_rows; k++) {
@@ -1321,7 +1325,8 @@ static void reward_update_hook(u32 uio) {
     if (uio != g_menu_uio) return;
     if (!gui || !cursor) return;
     float spacing = FN(GetY, GUI_GET_Y)(gui, INST_SPACING);
-    FN(SetY, GUI_SET_Y)(gui, INST_HIGHLIGHT, spacing * (float)shown_row(*(u8 *)(cursor + CURSOR_ROW)));
+    u32 shown = uio == g_exit_uio ? g_send_row + 1 : shown_row(*(u8 *)(cursor + CURSOR_ROW));
+    FN(SetY, GUI_SET_Y)(gui, INST_HIGHLIGHT, spacing * (float)shown);
     FN(Sync, CURSOR_SYNC)(cursor, uio, INST_HIGHLIGHT);
 }
 
