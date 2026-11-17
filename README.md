@@ -31,24 +31,34 @@ All of a spot's messages come in one notification, with one line per item (and i
 only in the base camp. Which items can be delivered doesn't change: the quest's target items and account items, but
 not carried items such as eggs.
 
-**Send all to Item Box & Exit.** The quest reward screen gets a new menu row under "Send to the Item Box". It sends
-every item of the section to your Item Box and moves on to the next section. This works for the reward box, your
-Palicoes' gathered items, the rewards from Meownster Hunters and Hunters for Hire, and the Item Appraisal ("Send all to
-Item Box & Exit" under "Send to Boxes": items to the Item Box, appraised equipment and charms to the Equipment Box).
-The trade cart's Claim Items gets the same row: it sends all three carts' items to the Item Box and closes Claim Items.
-If the box fills up first, the menu stays open with what's left.
+**Send all to the Item Box & Exit.** The quest reward screen gets a new menu row under "Send to the Item Box". It
+sends every item of the section to your Item Box and moves on to the next section. The same row is on:
+
+- the reward box and your Palicoes' gathered items;
+- the rewards from Meownster Hunters and Hunters for Hire;
+- the Item Appraisal, as "Send all to Boxes & Exit": items go to the Item Box, appraised equipment and charms to the
+  Equipment Box;
+- the trade cart's Claim Items: it sends all three carts' items to the Item Box and closes Claim Items.
+
+If the box fills up first, the menu stays open with what's left. The row has its own help line, and the game's own
+rows keep theirs.
 
 <p align="center"><img src="docs/send-all.jpg" width="640" alt="The new row on the quest reward screen"></p>
+<p align="center">
+  <img src="docs/trade-cart.jpg" width="420" alt="The new row at the trade cart's Claim Items">
+  <img src="docs/meownster-hunters.jpg" width="420" alt="The new row on the Meownster Hunters rewards">
+</p>
 
-**Auto-sort the Item Pouch** (off by default). Whenever items are added to the Item Pouch, it's sorted the way its
-own Sort does it (the top face button in the pouch), without the question and the sound. While a box screen is open
-(the Item Box, the supply box), the sort waits until you close it. Sorting by hand still asks as usual.
+**Auto-sort the Item Pouch** (off by default). Whenever items are added to the Item Pouch (gathering, carving,
+rewards, the supply box, the Item Box), it's sorted the way its own Sort does it (the top face button in the pouch),
+without the question and the sound. While a box screen is open, the sort waits until you close it. Sorting by hand
+still asks as usual.
 
 ## Settings
 
-Every feature can be turned on and off, and they're all on by default. With [Purple-lib](https://gamebanana.com/mods/740376)
-(r19 or later, optional) open the start menu, then **Options > Mod Options > Field QoL**. Without it, press **Insert** in
-game for Forge's menu and open **Field QoL**. The switches are saved when you change them, in `save_0/fieldqol.ini` next
+Every feature can be turned on and off. They're all on by default, except Auto-sort. With
+[Purple-lib](https://gamebanana.com/mods/740376) (r19 or later, optional) open the start menu, then
+**Options > Mod Options > Field QoL**. Without it, press **Insert** in game for Forge's menu and open **Field QoL**. The switches are saved when you change them, in `save_0/fieldqol.ini` next
 to your save, so they stay as you set them the next time you start the game. You can edit that file while the game is
 closed.
 
@@ -60,33 +70,29 @@ closed.
 2. Extract it into the recomp's `mods` folder, so that you get `mods/field-qol/`:
    - macOS: `~/Library/Application Support/MHGURecomp/mods/`
    - Windows and Linux: the `mods` folder next to the recomp's executable
+3. Start the game. `log.txt` should list three `field-qol:` lines: `one press gathers the whole spot`,
+   `pouch deliveries work anywhere` and `Send all to the Item Box & Exit on the reward screen`.
 
-   Gathering and delivering work right away.
-3. For **Send all to Item Box & Exit**, run the layout tool once. It builds the reward screen's new menu row from
-   your own game files, because the mod can't ship them. You need [Python 3](https://www.python.org/downloads/).
-   Open a terminal in the `field-qol` folder and run:
-   - macOS and Linux: `python3 tools/make_arcs.py`
-   - Windows: `py tools\make_arcs.py`
-4. Start the game. `log.txt` should list three `field-qol:` lines: `one press gathers the whole spot`,
-   `pouch deliveries work anywhere` and `Send all to Item Box & Exit on the reward screen`.
+Nothing else is needed: no layout tool and no game files. The new menu rows are made by the plugin while the game
+runs.
+
+**Updating from 0.5 to 0.7:** those versions needed a layout tool, which wrote `.arc` files into the mod's folder.
+They aren't needed anymore: delete `field-qol/romfs/nativeNX/eng/arc/` (with `result_eng.arc`,
+`village/common_eng.arc` and `facility/shoptrade_eng.arc` in it) and the old `field-qol/tools/` folder.
 
 ## Uninstall
 
-Delete the `field-qol` folder, or turn the mod off in the recomp's Mods tab. That restores everything: the layout tool
-never changes your game files, it only writes new copies into the mod's own folder, which the recomp applies on top of
-the game's data.
+Delete the `field-qol` folder, or turn the mod off in the recomp's Mods tab. The mod never changes your game files.
+Your settings stay in `save_0/fieldqol.ini` next to your save; delete that file too if you want them gone.
 
-To keep the gathering and delivery features but get the game's original menus back, delete just the `.arc` files in
-`field-qol/romfs/nativeNX/` (the layout tool's output). The plugin then leaves the menus alone.
+To keep the other features but get the game's original menus back, turn off **Send all to box** in the settings.
 
 ## Compatibility
 
 - **Game version:** MHGU 1.4.0, which the recomp needs anyway.
-- **Language:** the new reward screen row needs the English menu layout. With another game language, gathering and
-  delivering still work, but the reward screen keeps its usual menu.
-- **Other mods:** the layout tool writes the mod's own copies of `result_eng.arc`, `common_eng.arc` and
-  `shoptrade_eng.arc`. If another
-  mod also changes those archives, the recomp merges the changes of both.
+- **Language:** only tested with the English game text. The plugin's own texts (the new rows, their help lines and the
+  settings) are in English.
+- **Other mods:** the mod ships no game files, so it doesn't replace anything another mod changes.
 
 ## Building
 
@@ -94,13 +100,12 @@ You need an `arm-none-eabi` GCC toolchain (on macOS: `brew install arm-none-eabi
 
 ```sh
 sh build.sh            # builds out/field_qol.nro
-sh build.sh install    # builds, installs into the recomp's mods/field-qol/ and runs the layout tool there
-sh build.sh release    # builds dist/field-qol-<version>.zip (no game data)
+sh build.sh install    # builds and installs into the recomp's mods/field-qol/
+sh build.sh release    # builds dist/field-qol-<version>.zip
 ```
 
-The reward screen layout is made from your own game files by `tools/make_arcs.py`, so neither this repository nor
-the release zip holds game data. `install` reads them from the recomp's folder: set `RECOMP=<path>` if yours isn't
-macOS's default `~/Library/Application Support/MHGURecomp`.
+`install` uses macOS's default recomp folder, `~/Library/Application Support/MHGURecomp`: set `RECOMP=<path>` for
+another.
 
 ### Layout of the repository
 
@@ -110,8 +115,6 @@ macOS's default `~/Library/Application Support/MHGURecomp`.
 | `src/forge.h` | The part of Forge's plugin API the plugin uses |
 | `src/purplelib.h` | Purple-lib's plugin header, for the Mod Options page |
 | `src/start.S`, `build/` | NRO start code, linker script and ELF to NRO converter |
-| `tools/make_arcs.py` | Adds the "Send all" row to the reward screen's and the trade cart's menu layouts |
-| `tools/mtgui.py`, `tools/patchgui.py` | A reader and an append-only editor for MHGU GUI files |
 | `docs/` | The screenshots in this readme |
 | `release/README.txt` | The readme that goes in the release zip |
 
@@ -121,7 +124,6 @@ macOS's default `~/Library/Application Support/MHGURecomp`.
   [mhgu-gathering-map](https://github.com/lick-mee/mhgu-gathering-map) (MIT).
 - `src/purplelib.h` is the header of [Purple-lib](https://gamebanana.com/mods/740376) by PurplefinNeptuna (MIT).
 - The plugin API is [Forge](https://github.com/Fexty12573/forge) by Fexty12573.
-- The GUI file tools follow Fexty12573's [mhw-gui-editor](https://github.com/Fexty12573/mhw-gui-editor).
 
 ## License
 

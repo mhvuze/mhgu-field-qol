@@ -1,9 +1,12 @@
 // Field QoL: quality-of-life changes on quests, as a Forge plugin for MHGU Recomp.
 //
-// Three features, each with a switch in Forge's menu (Insert > Field QoL), all on by default:
-//   - Gathering: one press at a gathering spot gathers everything the spot has left.
-//   - Delivery:  the Item Pouch's Deliver works anywhere on the map, not only in the base camp.
-//   - Rewards:   "Send all to the Item Box & Exit" on the quest reward screen.
+// Its features, each with a switch (Options > Mod Options > Field QoL with Purple-lib, Forge's menu, fieldqol.ini):
+//   - Gathering:  one press at a gathering spot gathers everything the spot has left (Hold R: one item), one notification
+//                 per spot, and a full pouch asks what to replace once the spot is done.
+//   - Delivery:   the Item Pouch's Deliver works anywhere on the map, not only in the base camp.
+//   - Rewards:    "Send all to the Item Box & Exit" on the reward screens, the appraisal and the trade cart, its menu row
+//                 made at runtime (no layout files).
+//   - Auto-sort:  (off by default) the Item Pouch sorted whenever items are added.
 //
 // The plugin runs in the recomp's interpreter as AArch32 code and calls the game's own functions. Addresses are
 // offsets into the game's main module (MHGU 1.4.0); at runtime they are added to forge_mem_getMainTextAddr(). Each
@@ -173,13 +176,13 @@
 #define TRADE_CARTS 3
 #define CART_CELLS 0x10           // 3 rows of 10 cells {u16 item, s16 quantity}
 #define CART_CELL_COUNT 30
-// its menu: rows at instances 5-7 (messages 0x1A + row, 0x1D for Exit), the fourth row (tools/make_arcs.py) 119
+// its menu: rows at instances 5-7 (messages 0x1A + row, 0x1D for Exit), the fourth row (the former layout tool) 119 or a runtime one
 #define TM_FLAGS 0x4C             // what to draw: 1 the highlight, 4 the rows, 8 their visibility
 #define TM_MODE 0x58              // 1: nothing to claim (Take and Send greyed, Exit)
 #define TM_CURSOR 0x50
 #define TM_ROW_SEND 6
 #define TM_ROW_THIRD 7
-#define TM_ROW_FOURTH 119         // (tools/make_arcs.py; without it, a runtime row: g_tm_row4)
+#define TM_ROW_FOURTH 119         // (the former layout tool; without it, a runtime row: g_tm_row4)
 #define TM_INSTANCES 119          // shop_trade's own instances
 #define TM_ROW_PARENT 4           // Nul_mes_sub
 #define TM_LINE 10                // Anm_line_sub
@@ -204,8 +207,9 @@
 #define ROW_TAKE 6                // layout instances: the first row
 #define ROW_SEND 7                // the second row (Send to the Item Box)
 #define ROW_THIRD 8               // the third row, which the plugin turns into "Send all..."
-#define ROW_FOURTH 89             // the fourth row, added by tools/make_arcs.py
-// (research) without the layout from tools/make_arcs.py, the fourth row and its separator are made at runtime
+#define ROW_FOURTH 89             // the fourth row in the layout from the former layout tool (0.5-0.7)
+// The added row and its separator are made at runtime as copies of the layout's own (a layout with the row from the
+// former layout tool is still used when it's installed)
 #define GUI_INST_ARRAY 0xF8       // cGUI: the layout's instances (objects)
 #define GUI_CREATE_INST 0x54501C  // cGUI: a new instance (gui, resource, animation, parent, type DTI) -> its index
 #define GUI_EXTRA_COUNT 0x288     // cGUI: instances made at runtime
@@ -582,9 +586,9 @@ static u32 clear_account_hook(void) {
 // SEND_TO_BOX (as much as the box takes) or hands it to RESULT_SPECIAL when the item is marked special.
 //
 // The menu is drawn by cUIOReward: MENU_ROWS sets the rows' texts (layout instances 6, 7, 8), MENU_LOOKS their looks,
-// and REWARD_UPDATE places the highlight bar at the cursor's row times the row spacing. tools/make_arcs.py adds a
-// fourth row to the layout (instance 89) and makes the window taller. The plugin puts "Send all..." on the third row
-// and moves the game's third entry to the fourth.
+// and REWARD_UPDATE places the highlight bar at the cursor's row times the row spacing. The plugin adds a fourth row
+// to the layout at runtime (a copy of the third, see clone_inst) and makes the window taller, puts "Send all..." on
+// the third row and moves the game's third entry to the fourth.
 //
 // The game's cursor keeps its three rows. "Send all" is an extra row between Send (1) and the third (2) that only the
 // plugin knows about: it is entered by moving down from Send or up from the third row, while the game's cursor stays
@@ -635,7 +639,7 @@ static u32 sound_hook(u32 kind, u32 id) {
 static u32 ROW_INSTANCES[4]; // (below)
 typedef u32 (*CreateInst)(u32 gui, u32 resource, u32 animation, u32 parent, u32 dti);
 typedef void (*SetF)(u32 instance, float v);
-static u32 g_rt_gui, g_rt_line, g_rt_row3; // (research) the layout given runtime rows, its separator, and a third
+static u32 g_rt_gui, g_rt_line, g_rt_row3; // the layout given runtime rows, its separator, and a third
                                            // row for the appraisal (whose state hides the layout's)
 static bool g_rt;               // the fourth row is a runtime one
 
@@ -649,16 +653,14 @@ static u32 clone_inst(u32 gui, u32 src, u32 parent, float y) {
     u32 idx = FN(CreateInst, GUI_CREATE_INST)(gui, *(u32 *)(obj + INST_RESOURCE), *(u32 *)(obj + INST_ANIMATION),
                                              parent, dti);
     FN(SetY, GUI_SET_Y)(gui, idx, y);
-    forge_log(LOG_INFO, "field-qol: research: copy of instance %u -> %u (resource %d, animation %u, scale %d/%d %%)",
-              src, idx, (int)*(u32 *)(obj + INST_RESOURCE), *(u32 *)(obj + INST_ANIMATION),
-              (int)(*(float *)(obj + INST_SCL_X) * 100), (int)(*(float *)(obj + INST_SCL_Y) * 100));
+    forge_log(LOG_INFO, "field-qol: menu row %u made as a copy of %u", idx, src);
     return idx;
 }
 
 static bool has_fourth_row(u32 uio) {
     u32 gui = *(u32 *)(uio + UIO_GUI);
     if (!gui) return false;
-    if (*(u32 *)(gui + GUI_INSTANCES) > ROW_FOURTH) { // (the layout from tools/make_arcs.py is loaded)
+    if (*(u32 *)(gui + GUI_INSTANCES) > ROW_FOURTH) { // (the former layout tool's layout is loaded)
         ROW_INSTANCES[3] = ROW_FOURTH, g_rt = false;
         return true;
     }
@@ -686,7 +688,7 @@ static void nudge(u32 gui, u32 i, bool scale, float from, float to) {
     }
 }
 
-// (research) the window one row taller and the box under it one row lower, as tools/make_arcs.py makes the layout:
+// The window one row taller and the box under it one row lower, as the former layout tool made the layout:
 // for a three-row menu (1) or the appraisal's two rows (2); the last one's changes undone when it's gone
 enum { RT_NONE, RT_FOUR, RT_APPRAISAL };
 static void runtime_layout(u32 gui, u32 mode) {
@@ -1117,7 +1119,7 @@ static u32 gh_hook(u32 ui) {
 
 // The trade cart's Claim Items (Neko): every cell of the three carts' inboxes to the Item Box as its Send does (room
 // for the whole quantity, BOX_PUT, the cell emptied), then the inbox saved and drawn once, with one sound.
-static bool g_trade_row; // (its menu has the fourth row: the layout from tools/make_arcs.py)
+static bool g_trade_row; // (its menu has the fourth row: the former layout tool's, or runtime rows)
 
 static bool trade_empty(void) {
     u32 items = GLOBAL(GOT_ITEMS);
@@ -1191,9 +1193,9 @@ static u32 trade_hook(u32 ui) {
 
 // Its menu: Send all after Send (on the third row), Sell Items & Exit on the fourth, the highlight on the row the
 // player sees. Turning the option off draws the game's rows again.
-static u32 g_tm_gui, g_tm_row4 = TM_ROW_FOURTH, g_tm_line; // (research) runtime rows for the trade's layout
+static u32 g_tm_gui, g_tm_row4 = TM_ROW_FOURTH, g_tm_line; // runtime rows for the trade's layout
 
-// The trade's layout with the fourth row: the one from tools/make_arcs.py, or runtime copies of row 3 and the separator
+// The trade's layout with the fourth row: the former layout tool's, or runtime copies of row 3 and the separator
 static bool trade_row(u32 gui) {
     if (!gui) return false;
     u32 n = *(u32 *)(gui + GUI_INSTANCES);
@@ -1208,7 +1210,7 @@ static bool trade_row(u32 gui) {
     return true;
 }
 
-// (research) runtime rows: the window one row taller and Cart Info one row lower while ours, as before otherwise
+// Runtime rows: the window one row taller and Cart Info one row lower while ours, as before otherwise
 static void trade_layout(u32 uio, u32 gui, bool ours) {
     if (!g_tm_line) return;
     FN(SetInt3, INST_VISIBLE)(uio, g_tm_line, ours);

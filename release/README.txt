@@ -5,36 +5,33 @@ Quality-of-life changes for quests:
 
   - One press at a gathering spot gathers everything it has left, and one carve
     takes all of a carcass's carves (eggs and other carried items still take a
-    press each, and Gypceros playing dead still gives one carve). All of a
-    spot's items come in one notification, and with a full pouch you choose
-    what to replace once the spot is done.
+    press each, and Gypceros playing dead still gives one carve). Hold R as you
+    start gathering for a single item. All of a spot's items come in one
+    notification, and with a full pouch you choose what to replace once the
+    spot is done.
   - The Item Pouch's Deliver works anywhere on the map, not only in the base camp.
-  - "Send all to Item Box & Exit" on the quest reward screen (reward box,
-    Palicoes' items, Item Appraisal), Meownster Hunters, Hunters for Hire and
-    the trade cart's Claim Items.
+  - "Send all to the Item Box & Exit" on the quest reward screen (reward box,
+    Palicoes' items), Meownster Hunters, Hunters for Hire and the trade cart's
+    Claim Items, and "Send all to Boxes & Exit" on the Item Appraisal.
+  - Auto-sort the Item Pouch whenever items are added (off by default).
 
 Only tested on MHGU Recomp, with the English game text.
 
 Install
 -------
-1. Put this "field-qol" folder in the recomp's "mods" folder:
-     - macOS: ~/Library/Application Support/MHGURecomp/mods/
-     - Windows and Linux: the "mods" folder next to the recomp's executable
-   Gathering and delivering work right away.
+Put this "field-qol" folder in the recomp's "mods" folder:
+  - macOS: ~/Library/Application Support/MHGURecomp/mods/
+  - Windows and Linux: the "mods" folder next to the recomp's executable
+That's all: no layout tool and no game files are needed anymore.
 
-2. For "Send all to Item Box & Exit", run the layout tool once. It makes the
-   reward screen's new menu row from your own game files (the mod can't ship
-   them), and needs Python 3 (python.org; macOS and Linux usually have it).
-   Open a terminal in the "field-qol" folder and run:
-     - macOS and Linux: python3 tools/make_arcs.py
-     - Windows:         py tools\make_arcs.py
-   It writes romfs/nativeNX/eng/arc/result_eng.arc, village/common_eng.arc and
-   facility/shoptrade_eng.arc into this folder. Run it again after updating
-   the mod.
+Updating from 0.5 to 0.7: those versions needed a layout tool, which wrote .arc
+files into this folder. Delete them: the folder romfs/nativeNX/eng/arc/ (with
+result_eng.arc, village/common_eng.arc and facility/shoptrade_eng.arc in it),
+and the old "tools" folder.
 
 Settings
 --------
-Every feature can be turned off, and they're all on by default.
+Every feature can be turned off. They're all on by default, except Auto-sort.
 With Purple-lib (r19 or later, optional: https://gamebanana.com/mods/740376):
 open the start menu, then Options > Mod Options > Field QoL.
 Without it: press Insert in game to open Forge's menu, then open "Field QoL".
@@ -45,10 +42,10 @@ edit that file while the game is closed.
 
 Uninstall
 ---------
-Delete the "field-qol" folder. This restores everything: the layout tool never
-changes your game files, it only writes copies into this folder.
+Delete the "field-qol" folder. The mod never changes your game files. Your
+settings stay in save_0/fieldqol.ini; delete it too if you want them gone.
 
-To keep gathering and delivering but get the game's original menus back, delete
-only the .arc files in field-qol/romfs/nativeNX/ (the layout tool's output).
+To keep the other features but get the game's original menus back, turn off
+"Send all to box" in the settings.
 
 Source code, issues and more details: https://github.com/mhvuze/mhgu-field-qol
