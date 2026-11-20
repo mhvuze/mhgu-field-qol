@@ -711,8 +711,11 @@ static u32 g_menu_rows = 3, g_send_row = 1;
 static bool g_cursor_extended;
 static u32 ROW_INSTANCES[4] = {ROW_TAKE, ROW_SEND, ROW_THIRD, ROW_FOURTH};
 
-// A menu left through Send all (Hunters for Hire closes with its A): it keeps Send all highlighted while it fades
+// A menu left through Send all: it keeps Send all highlighted while the screen closes, as the game keeps Sell Items &
+// Exit highlighted (the plugin closes it through another row or button of the game's), until the game's cursor is back
+// on the first row (the menu opened again)
 static u32 g_exit_uio;
+static bool g_trade_exit;
 
 // The row the player sees highlighted: the game's rows with "Send all" after Send
 static u32 shown_row(u32 game_row) {
@@ -843,6 +846,7 @@ static u32 appraisal_hook(u32 ui) {
                   leaving ? ", leaving" : ", a box is full");
         if (!leaving) *pressed = was & ~PAD_A; // (with entries left the game would sell them; with none its A ends
                                                // the appraisal, from any row)
+        else g_exit_uio = uio;
     } else if ((was & PAD_A) && row == 2) {
         cursor[CURSOR_ROW] = 1; // (the game's Sell Items & Exit)
     }
@@ -894,7 +898,7 @@ static u32 section_hook(u32 ui, u32 section) {
                   leaving ? ", leaving" : ", the box is full");
         if (leaving) {
             cursor[CURSOR_ROW] = 2;
-            g_on_send_all = false;
+            g_on_send_all = false, g_exit_uio = uio;
         } else {
             *pressed = was & ~PAD_A; // (the game would open Send's grid)
         }
@@ -951,6 +955,7 @@ static void help_again(u32 row) {
 static void track_cursor(u8 *cursor, u32 before, u32 was, u32 screen, const char *help) {
     u32 after = cursor[CURSOR_ROW];
     bool on = g_on_send_all;
+    if (after != before) g_exit_uio = 0, g_trade_exit = false; // (the menu is in use again)
     if (screen != g_help_screen) {
         g_help_screen = screen;
         for (u32 i = 0; i < 3; i++) g_help_known[i] = false;
@@ -1040,7 +1045,7 @@ static u32 monnyan_hook(u32 list) {
             FN(MenuSet, MENU_SET)(uio, MN_ROWS_DONE, 1, 6);
             cursor[CURSOR_ROW] = 2, *(u16 *)(cursor + CURSOR_PAGE) = 0;
             *(u32 *)(list + MN_STATE) = MN_DONE;
-            g_on_send_all = false;
+            g_on_send_all = false, g_exit_uio = uio;
         } else {
             *pressed = was & ~PAD_A; // (the game would open Send's grid)
         }
@@ -1175,7 +1180,7 @@ static u32 trade_hook(u32 ui) {
                   leaving ? ", leaving" : ", the box is full");
         if (leaving) {
             *pad = PAD_B; // (the game's B closes Claim Items)
-            g_on_send_all = false;
+            g_on_send_all = false, g_trade_exit = true;
         } else {
             *pad = was & ~PAD_A; // (the game would open Send's grid)
         }
@@ -1253,7 +1258,8 @@ static void trade_menu_hook(u32 uio) {
     if (cursor) {
         float spacing = FN(GetY, GUI_GET_Y)(gui, TM_SPACING);
         u32 row = *(u8 *)(cursor + CURSOR_ROW); // (Send is its second row: Send all and Sell one lower)
-        u32 shown = g_on_send_all ? 2 : row >= 2 ? row + 1 : row;
+        if (g_trade_exit && !row) g_trade_exit = false; // (opened again)
+        u32 shown = g_on_send_all || g_trade_exit ? 2 : row >= 2 ? row + 1 : row;
         FN(SetY, GUI_SET_Y)(gui, TM_HIGHLIGHT, spacing * (float)shown);
     }
 }
@@ -1287,7 +1293,6 @@ static void rows_hook(u32 uio, u32 list, u32 flag) {
         return;
     }
     g_menu_uio = uio, g_menu_rows = count, g_send_row = two ? 0 : 1;
-    if (uio == g_exit_uio) g_exit_uio = 0; // (set up again: the game's cursor counts)
     // the appraisal's state hides the layout's third row: with runtime rows, a runtime one stands in for it
     ROW_INSTANCES[2] = g_rt && two && g_rt_row3 ? g_rt_row3 : ROW_THIRD;
     if (g_rt && g_rt_row3 && !two) FN(SetInt, UIO_SET_VISIBLE)(uio, g_rt_row3, ROW_OBJECT, 0);
@@ -1327,6 +1332,7 @@ static void reward_update_hook(u32 uio) {
     if (uio != g_menu_uio) return;
     if (!gui || !cursor) return;
     float spacing = FN(GetY, GUI_GET_Y)(gui, INST_SPACING);
+    if (uio == g_exit_uio && !*(u8 *)(cursor + CURSOR_ROW)) g_exit_uio = 0; // (opened again)
     u32 shown = uio == g_exit_uio ? g_send_row + 1 : shown_row(*(u8 *)(cursor + CURSOR_ROW));
     FN(SetY, GUI_SET_Y)(gui, INST_HIGHLIGHT, spacing * (float)shown);
     FN(Sync, CURSOR_SYNC)(cursor, uio, INST_HIGHLIGHT);
