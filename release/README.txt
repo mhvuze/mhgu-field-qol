@@ -13,6 +13,8 @@ Quality-of-life changes for quests:
   - "Send all to the Item Box & Exit" on the quest reward screen (reward box,
     Palicoes' items), Meownster Hunters, Hunters for Hire and the trade cart's
     Claim Items, and "Send all to Boxes & Exit" on the Item Appraisal.
+  - Y on the Melding Pot's talisman list chooses talismans you own better ones
+    of ("Select leftovers"), never the one you wear or one in a saved set.
   - Auto-sort the Item Pouch whenever items are added (off by default).
 
 Only tested on MHGU Recomp, with the English game text.

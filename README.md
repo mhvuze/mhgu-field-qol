@@ -49,6 +49,12 @@ rows keep theirs.
   <img src="docs/meownster-hunters.jpg" width="420" alt="The new row on the Meownster Hunters rewards">
 </p>
 
+**Meld leftovers.** On the Melding Pot's talisman list (choose a melding, then "Select 3 Talismans"), **Y** chooses
+the talismans you don't need for you: those another talisman of yours beats or equals (at least the points in every
+skill either one has, negative skills too, and at least the slots; of identical talismans one is kept). It never
+chooses the talisman you wear or one in a saved equipment set, and takes the least valuable first. If there aren't
+enough, it chooses what there is and leaves the rest to you. The guide at the bottom right shows "Select leftovers".
+
 **Auto-sort the Item Pouch** (off by default). Whenever items are added to the Item Pouch (gathering, carving,
 rewards, the supply box, the Item Box), it's sorted the way its own Sort does it (the top face button in the pouch),
 without the question and the sound. While a box screen is open, the sort waits until you close it. Sorting by hand

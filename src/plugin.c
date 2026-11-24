@@ -298,7 +298,7 @@ static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 
 // The switches in Forge's menu
 static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true, g_hold_single = true;
-static bool g_deliver_anywhere = true, g_send_all = true, g_auto_sort = false;
+static bool g_deliver_anywhere = true, g_send_all = true, g_auto_sort = false, g_meld_leftovers = true;
 
 // The compiler may emit memset/memcpy calls; there is no C library to provide them
 void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; return d; }
@@ -1338,6 +1338,238 @@ static void reward_update_hook(u32 uio) {
     FN(Sync, CURSOR_SYNC)(cursor, uio, INST_HIGHLIGHT);
 }
 
+// ================================================================== Melding: Y picks leftover talismans
+//
+// The melding screen (uUIAlchemy, its main state MELD_UPDATE) lists the talismans for the chosen melding a page of 9
+// rows at a time (MELD_FILL fills a page from the equipment box and flags each row); A on a usable row chooses it (box
+// index into MELD_CHOSEN, MELD_COUNT up) and the third opens "Meld?". With Y the plugin collects every usable row of
+// every page, keeps those another talisman beats or equals (dominates: at least the points in every skill either has,
+// negative ones too, and at least the slots; of identical ones the first is kept), never the worn one or one in a saved
+// equipment set, and chooses the least valuable through the game's own A, one a frame.
+#define MELD_UPDATE 0x6DDF38      // uUIAlchemy: the melding screen's main state, every frame (ui)
+#define MELD_FILL 0x6E026C        // uUIAlchemy: fill a page of the talisman list (ui, page, reset the cursor)
+#define MELD_DRAW_CHOSEN 0x6E03F8 // uUIAlchemy: draw the chosen talismans (ui)
+#define MELD_DRAW_DETAIL 0x6E04C0 // uUIAlchemy: draw the talisman under the cursor (ui)
+#define EQUIP_ENTRY 0x143894      // the equipment box: an entry (box, 0, index) -> entry, 0 if none
+#define MELD_SUBSTATE 5           // (u8) 1: the talisman list, 2: "Meld?"
+#define MELD_LIST 1
+#define MELD_COUNT 0x54           // talismans chosen (of MELD_NEEDED)
+#define MELD_NEEDED 3
+#define MELD_CURSOR 0xC4          // the list's cursor (row +0xD, page +0x10)
+#define MELD_TOTAL 0x44           // rows in the list, all pages
+#define MELD_ROWS 0x174           // the page's rows: flags, +8 the box index (0xFFFF: none)
+#define MELD_ROW_SIZE 0x18
+#define MELD_PAGE_ROWS 9
+#define MELD_REDRAW 0x16C         // (|= 0x80: the rows are drawn again)
+#define ROW_USABLE_MASK 0x19      // (flags & it) == 1: can be chosen
+#define ROW_CHOSEN 4
+#define ROW_WORN 8
+#define ROW_IN_SET 0x20           // in a saved equipment set
+#define PAD_Y 0x8000
+#define EQUIP_SLOTS 2000
+#define KIND_CHARM 6              // entry +4 (u16) & 31
+#define CHARM_TREE 0x10           // u8 x2, then s8 points x2 at +0x12, u8 slots at +0x14
+#define MAX_CANDIDATES 400
+
+typedef u32 (*EquipEntry)(u32 box, u32 zero, u32 index);
+typedef u32 (*Fill)(u32 ui, u32 page, u32 reset);
+
+typedef struct { u8 tree[2]; s8 pts[2]; u8 slots; } Charm;
+typedef struct { u16 index, page; u8 row; } Pick;
+
+static Charm g_charm[EQUIP_SLOTS];
+static bool g_is_charm[EQUIP_SLOTS];
+static u16 g_charms[EQUIP_SLOTS], g_charm_count; // (the box indices of the talismans)
+static Pick g_picks[MELD_NEEDED];
+static u32 g_picks_left, g_picks_next;
+static bool g_meld_restore;
+static u16 g_meld_page0;
+static u8 g_meld_row0;
+
+static s32 charm_points(const Charm *c, u8 tree) {
+    s32 n = 0;
+    for (u32 k = 0; k < 2; k++)
+        if (c->tree[k] == tree && c->pts[k]) n += c->pts[k];
+    return n;
+}
+
+// Whether talisman a (box index ai) beats or equals b (bi): identical ones are ordered by their box index
+static bool dominates(const Charm *a, u32 ai, const Charm *b, u32 bi) {
+    if (a->slots < b->slots) return false;
+    bool same = a->slots == b->slots;
+    const Charm *both[2] = {a, b};
+    for (u32 w = 0; w < 2; w++)
+        for (u32 k = 0; k < 2; k++) {
+            u8 t = both[w]->tree[k];
+            if (!t || !both[w]->pts[k]) continue;
+            s32 pa = charm_points(a, t), pb = charm_points(b, t);
+            if (pa < pb) return false;
+            if (pa != pb) same = false;
+        }
+    return !same || ai < bi;
+}
+
+static u32 charm_value(const Charm *c) { // (the least valuable leftovers are chosen first)
+    u32 v = 3u * c->slots;
+    for (u32 k = 0; k < 2; k++)
+        if (c->tree[k] && c->pts[k] > 0) v += (u32)c->pts[k];
+    return v;
+}
+
+static void read_charms(void) {
+    u32 box = GLOBAL(GOT_EQUIP_BOX);
+    g_charm_count = 0;
+    for (u32 i = 0; i < EQUIP_SLOTS; i++) {
+        u32 e = box ? FN(EquipEntry, EQUIP_ENTRY)(box, 0, i) : 0;
+        g_is_charm[i] = e && (*(u16 *)(e + 4) & 31) == KIND_CHARM;
+        if (!g_is_charm[i]) continue;
+        const u8 *d = (const u8 *)(e + CHARM_TREE);
+        g_charm[i].tree[0] = d[0], g_charm[i].tree[1] = d[1];
+        g_charm[i].pts[0] = (s8)d[2], g_charm[i].pts[1] = (s8)d[3];
+        g_charm[i].slots = d[4];
+        g_charms[g_charm_count++] = (u16)i;
+    }
+}
+
+// Y: choose the leftovers this melding still needs; false when there are none
+static bool meld_leftovers(u32 ui) {
+    u32 count = *(u32 *)(ui + MELD_COUNT);
+    if (count >= MELD_NEEDED) return false;
+    u8 *cursor = (u8 *)(ui + MELD_CURSOR);
+    u16 page0 = *(u16 *)(cursor + CURSOR_PAGE);
+    u8 row0 = cursor[CURSOR_ROW];
+    Fill fill = FN(Fill, MELD_FILL);
+
+    // every row the game lets you choose, with where it is
+    static Pick cand[MAX_CANDIDATES];
+    u32 n = 0;
+    fill(ui, 0, 0);
+    u32 total = *(u32 *)(ui + MELD_TOTAL);
+    for (u32 page = 0; page * MELD_PAGE_ROWS < total && n < MAX_CANDIDATES; page++) {
+        if (page) fill(ui, page, 0);
+        for (u32 r = 0; r < MELD_PAGE_ROWS && n < MAX_CANDIDATES; r++) {
+            u32 row = ui + MELD_ROWS + r * MELD_ROW_SIZE, flags = *(u32 *)row, index = *(u32 *)(row + 8);
+            if (index >= EQUIP_SLOTS || (flags & ROW_USABLE_MASK) != 1 || (flags & (ROW_CHOSEN | ROW_WORN | ROW_IN_SET)))
+                continue;
+            cand[n].index = (u16)index, cand[n].page = (u16)page, cand[n].row = (u8)r;
+            n++;
+        }
+    }
+    fill(ui, page0, 0);
+
+    // the dominated ones (each checked once against every talisman), then the least valuable of them first
+    read_charms();
+    static bool left[MAX_CANDIDATES];
+    u32 leftovers = 0;
+    for (u32 c = 0; c < n; c++) {
+        u32 bi = cand[c].index;
+        left[c] = false;
+        if (!g_is_charm[bi]) continue;
+        for (u32 k = 0; k < g_charm_count && !left[c]; k++) {
+            u32 j = g_charms[k];
+            if (j != bi && dominates(&g_charm[j], j, &g_charm[bi], bi)) left[c] = true;
+        }
+        leftovers += left[c];
+    }
+    u32 need = MELD_NEEDED - count;
+    g_picks_left = 0;
+    while (g_picks_left < need) {
+        u32 best = n, best_value = 0;
+        for (u32 c = 0; c < n; c++) {
+            if (!left[c]) continue;
+            u32 v = charm_value(&g_charm[cand[c].index]);
+            if (best == n || v < best_value) best = c, best_value = v;
+        }
+        if (best == n) break;
+        left[best] = false;
+        g_picks[g_picks_left++] = cand[best];
+        u32 bi = cand[best].index, by = 0;
+        for (u32 k = 0; k < g_charm_count; k++)
+            if (g_charms[k] != bi && dominates(&g_charm[g_charms[k]], g_charms[k], &g_charm[bi], bi)) { by = g_charms[k]; break; }
+        const Charm *a = &g_charm[bi], *b = &g_charm[by];
+        forge_log(LOG_INFO, "field-qol: melding: box %u (skill %u %d, skill %u %d, %u slots) is beaten by box %u (skill %u %d, "
+                  "skill %u %d, %u slots)", bi, a->tree[0], a->pts[0], a->tree[1], a->pts[1], a->slots, by, b->tree[0],
+                  b->pts[0], b->tree[1], b->pts[1], b->slots);
+    }
+    forge_log(LOG_INFO, "field-qol: melding: %u of %u usable talismans are leftovers, choosing %u", leftovers, n,
+              g_picks_left);
+    g_picks_next = 0;
+    g_meld_page0 = page0, g_meld_row0 = row0;
+    return g_picks_left > 0;
+}
+
+// The button guide (bottom right; component 5 of the screen holding the help line): its first list, four entries
+// {button icon, text}, shows "Help" here; the plugin adds "Select leftovers" with Y's icon while the list is open
+#define GUIDE_UIO_INDEX 5
+#define GUIDE_ADD 0x644C34        // the guide: add an entry to the first free of four (guide, icon, text) -> 1: added
+#define GUIDE_BUILD 0x6439EC      // the guide: lay it out again (guide, set, flags, 1)
+#define GUIDE_SET 0x4C            // its set and flags (for GUIDE_BUILD)
+#define GUIDE_FLAGS 0x50
+#define GUIDE_FIRST 0x228         // 4 x {u32 icon (-1: none), const char *text}
+#define ICON_Y 3                  // (icons: A 0, B 1, X 2, Y 3 ... + 14, - 15)
+static const char MELD_HINT[] = "Select leftovers";
+static bool g_meld_hint;
+static u32 g_meld_frame, g_frame; // (g_frame: frames since the start, counted in forge_onUpdate)
+
+typedef u32 (*Build)(u32 guide, u32 set, u32 flags, u32 one);
+typedef u32 (*GuideAdd)(u32 guide, u32 icon, const char *text);
+
+static u32 guide_uio(void) {
+    u32 screen = FN(Is2, SCREEN)(GLOBAL(GOT_LOOKS), 0);
+    return screen ? FN(Component, UI_COMPONENT)(screen, GUIDE_UIO_INDEX) : 0;
+}
+
+static void meld_hint(bool show) {
+    u32 g = guide_uio();
+    if (!g) return;
+    bool there = false;
+    for (u32 i = 0; i < 4; i++) {
+        u32 *e = (u32 *)(g + GUIDE_FIRST + 8 * i);
+        if (e[1] != (u32)MELD_HINT) continue;
+        there = true;
+        if (!show) e[0] = 0xFFFFFFFF, e[1] = 0;
+    }
+    bool changed = show ? !there && FN(GuideAdd, GUIDE_ADD)(g, ICON_Y, MELD_HINT) : there;
+    if (changed) FN(Build, GUIDE_BUILD)(g, *(u32 *)(g + GUIDE_SET), *(u32 *)(g + GUIDE_FLAGS), 1);
+    g_meld_hint = show;
+}
+
+static ForgeHook g_meld_hook;
+
+static u32 meld_hook(u32 ui) {
+    bool list = *(u8 *)(ui + MELD_SUBSTATE) == MELD_LIST;
+    g_meld_frame = g_frame;
+    if (list != g_meld_hint || (list && !g_meld_leftovers) ) meld_hint(list && g_meld_leftovers);
+    if (!list) {
+        g_picks_left = 0, g_meld_restore = false;
+        return ORIGINAL(Is, g_meld_hook)(ui);
+    }
+    u32 *pressed = (u32 *)(GLOBAL(GOT_PAD) + PAD_PRESSED), was = *pressed;
+    u8 *cursor = (u8 *)(ui + MELD_CURSOR);
+    if (g_picks_next < g_picks_left) {
+        // the next leftover: the cursor on its row, and the game's A
+        const Pick *p = &g_picks[g_picks_next++];
+        *(u16 *)(cursor + CURSOR_PAGE) = p->page, cursor[CURSOR_ROW] = p->row;
+        FN(Fill, MELD_FILL)(ui, p->page, 0);
+        *pressed = PAD_A;
+        if (g_picks_next == g_picks_left) g_meld_restore = true;
+    } else if (g_meld_restore) {
+        // fewer than needed (no "Meld?"): the cursor back where it was
+        g_meld_restore = false, g_picks_left = g_picks_next = 0;
+        *(u16 *)(cursor + CURSOR_PAGE) = g_meld_page0, cursor[CURSOR_ROW] = g_meld_row0;
+        FN(Fill, MELD_FILL)(ui, g_meld_page0, 0);
+        FN(Method, MELD_DRAW_CHOSEN)(ui);
+        FN(Method, MELD_DRAW_DETAIL)(ui);
+        *(u32 *)(ui + MELD_REDRAW) |= 0x80;
+    } else if (g_meld_leftovers && (was & PAD_Y)) {
+        if (!meld_leftovers(ui)) FN(Sound, UI_SOUND)(0, SOUND_FULL);
+        *pressed = was & ~PAD_Y;
+    }
+    u32 r = ORIGINAL(Is, g_meld_hook)(ui);
+    *pressed = was;
+    return r;
+}
+
 // ================================================================== Auto-sort (off by default)
 //
 // The Item Pouch's Sort (its top face button, then Yes) calls POUCH_SORT on the pouch. With the switch on, the plugin
@@ -1377,7 +1609,7 @@ static u32 pouch_total(const u16 *item, const u16 *qty, u16 id) {
 #define SHARE_BOX_UPDATE 0x66D588
 #define BOX_QUIET_FRAMES 10
 static ForgeHook g_item_box_hook, g_supply_box_hook, g_share_box_hook;
-static u32 g_frame, g_box_frame;
+static u32 g_box_frame;
 
 static u32 item_box_hook(u32 ui) { g_box_frame = g_frame; return ORIGINAL(Is, g_item_box_hook)(ui); }
 static u32 supply_box_hook(u32 ui) { g_box_frame = g_frame; return ORIGINAL(Is, g_supply_box_hook)(ui); }
@@ -1432,6 +1664,8 @@ static const Setting SETTINGS[] = {
     {"full_pouch", "Replacement prompt last", "Gather everything, then ask what to replace.", &g_roll_all, true},
     {"deliver_anywhere", "Deliver anywhere", "Item Pouch Deliver works away from camp.", &g_deliver_anywhere, true},
     {"send_all", "Send all to box", "Adds \"Send all to the Item Box & Exit\".", &g_send_all, true},
+    {"meld_leftovers", "Meld leftovers (Y)", "Y on the melding talisman list chooses\r\ntalismans you own better ones of.",
+     &g_meld_leftovers, true},
     {"auto_sort", "Auto-sort Item Pouch", "Sorts the Item Pouch whenever items are\r\nadded to it, as its Sort does.",
      &g_auto_sort, false},
 };
@@ -1668,6 +1902,9 @@ EXPORT void forge_onInit(void) {
     if (g_rewards_hooked && !(hook(&g_appraisal_help_hook, APPRAISAL_HELP, appraisal_help_hook) &&
                               hook(&g_appraisal_hook, APPRAISAL_UPDATE, appraisal_hook)))
         forge_log(LOG_WARN, "field-qol: the appraisal hook FAILED, no Send all there");
+    // Melding: Y chooses leftover talismans
+    if (!hook(&g_meld_hook, MELD_UPDATE, meld_hook))
+        forge_log(LOG_WARN, "field-qol: the melding hook FAILED, no leftover talismans with Y");
     // Auto-sort: the screens it waits for
     if (!(hook(&g_item_box_hook, ITEM_BOX_UPDATE, item_box_hook) & hook(&g_supply_box_hook, SUPPLY_BOX_UPDATE, supply_box_hook) &
           hook(&g_share_box_hook, SHARE_BOX_UPDATE, share_box_hook)))
@@ -1689,6 +1926,7 @@ EXPORT void forge_onInit(void) {
 EXPORT void forge_onUpdate(float dt) {
     (void)dt;
     if (g_main) g_frame++, auto_sort_update();
+    if (g_meld_hint && g_frame - g_meld_frame > 2) meld_hint(false); // (the melding screen closed)
     g_since_r = forge_input_isDown(BUTTON_R) ? 0 : g_since_r + (g_since_r <= SINGLE_FRAMES);
     settings_update();
     if (g_main) prompt_next();
@@ -1738,6 +1976,9 @@ EXPORT void forge_onImGuiRender(void) {
     if (!g_deliver_hooked) igTextUnformatted("Hook failed: deliveries may stay camp only (see log.txt).", NULL);
     igCheckbox("Deliver from the Item Pouch anywhere", &g_deliver_anywhere);
     igTextUnformatted("Deliver and Clear out Account Items, for what the game allows.", NULL);
+
+    igTextUnformatted("Melding", NULL);
+    igCheckbox("Y on the talisman list: choose leftover talismans", &g_meld_leftovers);
 
     igTextUnformatted("Item Pouch", NULL);
     igCheckbox("Auto-sort the Item Pouch when items are added (off by default)", &g_auto_sort);
