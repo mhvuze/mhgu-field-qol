@@ -38,32 +38,48 @@ sends every item of the section to your Item Box and moves on to the next sectio
 - the rewards from Meownster Hunters and Hunters for Hire;
 - the Item Appraisal, as "Send all to Boxes & Exit": items go to the Item Box, appraised equipment and charms to the
   Equipment Box;
-- the trade cart's Claim Items: it sends all three carts' items to the Item Box and closes Claim Items.
+- the trade cart's Claim Items: it sends all three carts' items to the Item Box and closes Claim Items;
+- the Melding Pot's Meld Result, as "Send all to Item Box & Exit": every melded Talisman goes to the Item Box and Meld
+  Result closes.
 
 If the box fills up first, the menu stays open with what's left. The row has its own help line, and the game's own
 rows keep theirs.
 
-<p align="center"><img src="docs/send-all.jpg" width="640" alt="The new row on the quest reward screen"></p>
-<p align="center">
-  <img src="docs/trade-cart.jpg" width="420" alt="The new row at the trade cart's Claim Items">
-  <img src="docs/meownster-hunters.jpg" width="420" alt="The new row on the Meownster Hunters rewards">
-</p>
+<p align="center"><img src="docs/send-all.jpg" width="640" alt="Send all to the Item Box &amp; Exit in a reward menu"></p>
 
 **Meld leftovers.** On the Melding Pot's talisman list (choose a melding, then "Select 3 Talismans"), **Y** chooses
 the talismans you don't need for you: those another talisman of yours beats or equals (at least the points in every
 skill either one has, negative skills too, and at least the slots; of identical talismans one is kept). It never
 chooses the talisman you wear or one in a saved equipment set, and takes the least valuable first. If there aren't
-enough, it chooses what there is and leaves the rest to you. The guide at the bottom right shows "Select leftovers".
+enough, it chooses what there is, a notification says how many it found, and the rest is up to you. The guide at the
+bottom right shows "Select Leftovers".
+
+**Sell all leftovers.** In **Item Box > Manage Equipment > View Talismans**, keep **R** (the game's sell button)
+held, then press **ZL**: it sells every leftover Talisman at once, the same ones Meld leftovers would choose, never the
+one you wear, one in a saved equipment set or one with Decorations attached. Pressing ZL first does nothing: R has to
+be held down when ZL is pressed. The game's sale question first shows how many it sells and their total in zenny; No
+sells nothing. R on its own still sells the Talisman under the cursor, when you let go of it. The guide at the bottom
+right shows "Sell (ZL: Leftovers)".
 
 **Auto-sort the Item Pouch** (off by default). Whenever items are added to the Item Pouch (gathering, carving,
 rewards, the supply box, the Item Box), it's sorted the way its own Sort does it (the top face button in the pouch),
 without the question and the sound. While a box screen is open, the sort waits until you close it. Sorting by hand
 still asks as usual.
 
+**Melding jackpot** (off by default). Every melding gives 7 charms, the most an order can hold:
+
+| Melding | The game gives | With the jackpot |
+| --- | --- | --- |
+| Mystery, Luminous, Ancient, Fabled | 1 Mystery, Shining, Timeworn or Enduring Charm | 7 of that charm |
+| Halcyon | 0 to 7 charms of random types | 7 charms, each type rolled with the game's odds |
+| Juju | 0 to 2 Enduring and 1 to 2 Timeworn Charms | 5 Enduring and 2 Timeworn Charms |
+
+For Juju Melding this is what the cheat `04000000 00196A9C E3A0A007` / `04000000 00196AA0 E3A09005` does.
+
 ## Settings
 
-Every feature can be turned on and off. They're all on by default, except Auto-sort. With
-[Purple-lib](https://gamebanana.com/mods/740376) (r19 or later, optional) open the start menu, then
+Every feature can be turned on and off. They're all on by default, except Auto-sort and the Melding jackpot.
+With [Purple-lib](https://gamebanana.com/mods/740376) (r19 or later, optional) open the start menu, then
 **Options > Mod Options > Field QoL**. Without it, press **Insert** in game for Forge's menu and open **Field QoL**. The switches are saved when you change them, in `save_0/fieldqol.ini` next
 to your save, so they stay as you set them the next time you start the game. You can edit that file while the game is
 closed.

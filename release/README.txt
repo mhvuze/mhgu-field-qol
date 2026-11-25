@@ -12,10 +12,19 @@ Quality-of-life changes for quests:
   - The Item Pouch's Deliver works anywhere on the map, not only in the base camp.
   - "Send all to the Item Box & Exit" on the quest reward screen (reward box,
     Palicoes' items), Meownster Hunters, Hunters for Hire and the trade cart's
-    Claim Items, and "Send all to Boxes & Exit" on the Item Appraisal.
+    Claim Items, "Send all to Boxes & Exit" on the Item Appraisal and "Send all
+    to Item Box & Exit" on the Melding Pot's Meld Result.
   - Y on the Melding Pot's talisman list chooses talismans you own better ones
-    of ("Select leftovers"), never the one you wear or one in a saved set.
+    of ("Select Leftovers"), never the one you wear or one in a saved set. A
+    notification says so when there are fewer than it needs.
+  - In Item Box > Manage Equipment > View Talismans, keep R held, then press
+    ZL: it sells all those leftover talismans at once (never the worn one, one
+    in a saved set or one with Decorations), after a question with their count
+    and total. R has to be held down when ZL is pressed.
   - Auto-sort the Item Pouch whenever items are added (off by default).
+  - Melding jackpot: every melding gives 7 charms, the most an order holds
+    (off by default): 7 of its charm for Mystery, Luminous, Ancient and Fabled
+    Melding, 7 random ones for Halcyon, 5 Enduring and 2 Timeworn for Juju.
 
 Only tested on MHGU Recomp, with the English game text.
 
@@ -33,7 +42,8 @@ and the old "tools" folder.
 
 Settings
 --------
-Every feature can be turned off. They're all on by default, except Auto-sort.
+Every feature can be turned off. They're all on by default, except Auto-sort and
+the Melding jackpot.
 With Purple-lib (r19 or later, optional: https://gamebanana.com/mods/740376):
 open the start menu, then Options > Mod Options > Field QoL.
 Without it: press Insert in game to open Forge's menu, then open "Field QoL".

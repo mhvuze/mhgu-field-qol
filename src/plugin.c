@@ -299,6 +299,7 @@ static bool g_gather_hooked, g_deliver_hooked, g_rewards_hooked;
 // The switches in Forge's menu
 static bool g_gather_all = true, g_merge = true, g_one_box = true, g_roll_all = true, g_hold_single = true;
 static bool g_deliver_anywhere = true, g_send_all = true, g_auto_sort = false, g_meld_leftovers = true;
+static bool g_meld_jackpot = false;
 
 // The compiler may emit memset/memcpy calls; there is no C library to provide them
 void *memset(void *d, int c, u32 n) { u8 *p = d; while (n--) *p++ = (u8)c; return d; }
@@ -831,6 +832,7 @@ static u32 appraisal_hook(u32 ui) {
     *(u16 *)(cursor + CURSOR_COUNT) = 3;
     g_cursor_extended = true;
     u32 row = cursor[CURSOR_ROW];
+    if (was & (PAD_A | PAD_B)) g_exit_uio = 0; // (the menu is in use again; Send all sets it below when it leaves)
     if (was & PAD_B) {
         // the game's B goes to its last row, which is Send all here: to Sell instead
         if (row != 2) {
@@ -933,7 +935,32 @@ static void help_show(const char *text) {
     *(u16 *)(uio + HELP_LAST_MESSAGE) = 0xFFFF; // (the game's next request is shown, even if it's the last one)
 }
 
+// Meld Result (below): its menu's cursor while the game runs its frame, and the help lines of its rows
+static u8 *g_mr_cursor;
+#define ALCHEMY_CURSOR_SUB (0xC4 - 5) // (the cursor's distance from the screen's sub-state byte)
+#define MR_MENU_SUB 3
+#define MR_HELP_SELL 0x3D         // the menu's help lines by row: Send 0x3C, Sell 0x3D, and 0x3E for a third
+#define MR_HELP_THIRD 0x3E
+static const char HELP_MELD_RESULT[] = "Send every melded Talisman to the\r\nItem Box and exit.";
+// View Talismans' R+ZL (below): the sale question shows the leftovers' count and total instead
+static bool g_sell_asking;
+static char g_sell_text[96];
 static void help_hook(u32 flags, u32 a, u32 table, u32 message, u32 x, u32 format, u32 arg0, u32 arg1) {
+    if (g_sell_asking && table == 0x16 && (message == 0x7C || message == 0x90)) {
+        ORIGINAL(HelpSet, g_help_hook)(flags, a, table, message, x, format, arg0, arg1);
+        help_show(g_sell_text);
+        return;
+    }
+    // Meld Result's menu (below): ours on row 1, Sell's line on row 2 (the game asks for row 2's); only while the menu
+    // is up with three rows (not Sell's question, whose text goes there too: its A passes the game's two rows)
+    if (g_mr_cursor && g_mr_cursor[CURSOR_ROWS] == 3 && g_mr_cursor[-ALCHEMY_CURSOR_SUB] == MR_MENU_SUB) {
+        u32 row = g_mr_cursor[CURSOR_ROW];
+        if (row == 1) {
+            help_show(HELP_MELD_RESULT);
+            return;
+        }
+        if (row == 2 && message == MR_HELP_THIRD) message = MR_HELP_SELL;
+    }
     u32 args[8] = {flags, a, table, message, x, format, arg0, arg1};
     for (u32 i = 0; i < 8; i++) g_help_last[i] = args[i];
     g_help_asked = true;
@@ -955,7 +982,7 @@ static void help_again(u32 row) {
 static void track_cursor(u8 *cursor, u32 before, u32 was, u32 screen, const char *help) {
     u32 after = cursor[CURSOR_ROW];
     bool on = g_on_send_all;
-    if (after != before) g_exit_uio = 0, g_trade_exit = false; // (the menu is in use again)
+    if (after != before || (was & (PAD_A | PAD_B))) g_exit_uio = 0, g_trade_exit = false; // (the menu is in use again)
     if (screen != g_help_screen) {
         g_help_screen = screen;
         for (u32 i = 0; i < 3; i++) g_help_known[i] = false;
@@ -1264,6 +1291,189 @@ static void trade_menu_hook(u32 uio) {
     }
 }
 
+// The Melding Pot's Meld Result (Claim Talismans, uUIAlchemy state 3): its menu, Send to Item Box and Sell Items &
+// Exit, gets "Send all to Item Box & Exit" between them. The game's cursor is given a third row while the menu is up
+// (so the mouse and the moves see three: Send 0, ours 1, Sell 2), and its A, B and help line are mapped back to the
+// game's two rows. The window (cUIOAlchemyReceive, component
+// 8) shows the three rows: Send, ours on the game's second row (instance 31), and a runtime copy of it one row lower
+// with Sell's text. Choosing ours opens Send's grid (sub-state 4) and presses A on each talisman in it, one a frame,
+// as the player would. With the grid empty the game shows its Done menu, where the plugin chooses Done, which closes
+// Meld Result. If the Item Box is full, it goes back to the menu.
+#define CLAIM_UPDATE 0x6DF3E8     // uUIAlchemy: Claim Talismans for a frame (ui)
+#define ALCHEMY_STATE 4           // u8: 3 claiming; +5 its sub-state: 3 the menu, 4 Send's grid
+#define ALCHEMY_CLAIM 3
+#define CLAIM_MENU 3
+#define CLAIM_GRID 4
+#define CLAIM_DONE 8              // (everything claimed: Send greyed and Done, its second row, which leaves)
+#define PAD_REPEAT 0x6C34         // the buttons pressed or repeating this frame (the cursor moves by them)
+#define PAD_UP 0x10
+#define PAD_DOWN 0x40
+#define GRID_COL 0x120            // u8 col, row, cols, rows; u16 page, pages at +0x124
+#define GRID_PAGE 0x124
+#define GRID_PAGES 0x126
+#define GRID_CELLS 0x440          // 0x3C a cell: u32 order, entry, state (2: a talisman), item
+#define GRID_CELL 0x3C
+#define GRID_FULL 2
+#define MAX_GRID_CELLS 280
+#define RECEIVE_UIO_INDEX 8       // cUIOAlchemyReceive: the Meld Result window
+#define RECEIVE_FLAGS 0x4C        // (|= 1: the highlight drawn again, at the row +0x50)
+#define RECEIVE_ROW 0x50
+#define RECEIVE_SET_TEXT 0x56EA08 // cUIO: an object's text (uio, instance, object, text), as the window sets its rows
+#define MR_INSTANCES 59           // the Melding Pot's layout: Anm_Window_main02, Null_text01 and its second row
+#define MR_WINDOW 25
+#define MR_ROW_PARENT 29
+#define MR_ROW_SECOND 31
+#define MR_ITEMBOX 32             // Null_sub_itembox (Free space), under the window
+#define MR_ROW_Y 72.0f
+#define MR_ROW_STEP 36.0f
+#define MR_WINDOW_SCL 6.0f        // the window's y scale for two rows, and one row more
+#define MR_ROW_SCL 1.7f
+#define MR_ITEMBOX_Y 202.0f
+#define MR_GROW 8                 // frames the window takes to grow a row
+#define CLAIM_LAST 7              // (sub-states 3-7: the menu, Send's grid, Sell's question and sale)
+#define MR_MSG_TABLE 1            // Sell Items & Exit: message 0x1C of table 1 (the message manager, GOT_MESSAGES)
+#define MR_MSG_SELL 0x1C
+#define GOT_MESSAGES 0x1838BD4
+#define MSG_TEXT 0x55BC4C         // a message's text (manager, table, number)
+#define ALCHEMY_CURSOR 0xC4       // uUIAlchemy: its menus' cursor
+static const char SEND_ALL_MR_TEXT[] = "Send all to Item Box & Exit"; // (beside the game's "Send to Item Box")
+typedef const char *(*MsgLookup)(u32 manager, u32 table, u32 number);
+static ForgeHook g_claim_hook;
+#define RECEIVE_DRAW 0x564F5C     // cUIOAlchemyReceive: draw what changed (uio): +0x4C flags 1 the highlight, 4 texts
+static ForgeHook g_receive_draw_hook;
+static bool g_mr_sending, g_mr_shown, g_mr_active;
+static u32 g_frame; // (frames since the start, counted in forge_onUpdate)
+static u32 g_mr_frame; // (the frame Meld Result last ran: the window's draw only does ours right after)
+static u32 g_mr_grow, g_mr_row_shown; // (the highlight's row: kept while Sell's question uses the cursor)
+static u32 g_mr_gui, g_mr_row3, g_mr_last = 0xFFFFFFFF;
+
+static u32 mr_next_cell(u32 ui) {
+    u8 *g = (u8 *)(ui + GRID_COL);
+    u32 per = (u32)g[2] * g[3], pages = *(u16 *)(ui + GRID_PAGES), n = per * (pages ? pages : 1);
+    if (n > MAX_GRID_CELLS) n = MAX_GRID_CELLS;
+    for (u32 i = 0; i < n; i++)
+        if (*(u32 *)(ui + GRID_CELLS + i * GRID_CELL + 8) == GRID_FULL) return i;
+    return 0xFFFFFFFF;
+}
+
+// The window's three rows (ours shown) or the game's two
+static void mr_layout(u32 ui, bool ours) {
+    u32 uio = FN(Component, UI_COMPONENT)(ui, RECEIVE_UIO_INDEX);
+    u32 gui = uio ? *(u32 *)(uio + UIO_GUI) : 0;
+    if (!gui || *(u32 *)(gui + GUI_INSTANCES) != MR_INSTANCES) return;
+    if (ours && (gui != g_mr_gui || !*(u32 *)(gui + GUI_EXTRA_COUNT))) {
+        g_mr_row3 = clone_inst(gui, MR_ROW_SECOND, MR_ROW_PARENT, MR_ROW_Y);
+        g_mr_gui = gui, g_mr_shown = false;
+    }
+    if (!g_mr_row3 || gui != g_mr_gui) return;
+    if (ours) { // (the window grows a row over MR_GROW frames, eased, the box under it moving along)
+        if (!g_mr_shown) *(u32 *)(uio + RECEIVE_FLAGS) |= 1 | 4, g_mr_grow = 0; // (our texts and highlight, below)
+        if (g_mr_grow < MR_GROW) g_mr_grow++;
+        float t = (float)g_mr_grow / MR_GROW, e = 1.0f - (1.0f - t) * (1.0f - t);
+        FN(SetF, INST_SET_SCL_Y)(inst_obj(gui, MR_WINDOW), MR_WINDOW_SCL + MR_ROW_SCL * e);
+        FN(SetY, GUI_SET_Y)(gui, MR_ITEMBOX, MR_ITEMBOX_Y + MR_ROW_STEP * e);
+        FN(SetInt3, INST_VISIBLE)(uio, g_mr_row3, g_mr_grow * 2 >= MR_GROW); // (once the window holds it)
+        g_mr_shown = true;
+    } else if (g_mr_shown) {
+        FN(SetF, INST_SET_SCL_Y)(inst_obj(gui, MR_WINDOW), MR_WINDOW_SCL);
+        FN(SetY, GUI_SET_Y)(gui, MR_ITEMBOX, MR_ITEMBOX_Y);
+        FN(SetInt3, INST_VISIBLE)(uio, g_mr_row3, 0);
+        // (no redraw asked for here: the window may not be drawn again until it's freed, and the game asks for its
+        // texts itself whenever it shows the window again)
+        g_mr_shown = false;
+    }
+}
+
+// The window's draw: with ours, the highlight on the row the player sees and the texts of rows 2 and 3
+static void receive_draw_hook(u32 uio) {
+    if (!g_mr_active || !g_mr_shown || g_frame - g_mr_frame > 2 || *(u32 *)(uio + UIO_GUI) != g_mr_gui) {
+        ORIGINAL(Method, g_receive_draw_hook)(uio);
+        return;
+    }
+    u32 shown = g_mr_row_shown;
+    if (*(u32 *)(uio + RECEIVE_ROW) != shown) *(u32 *)(uio + RECEIVE_ROW) = shown, *(u32 *)(uio + RECEIVE_FLAGS) |= 1;
+    u32 flags = *(u32 *)(uio + RECEIVE_FLAGS);
+    ORIGINAL(Method, g_receive_draw_hook)(uio);
+    if (flags & 7) {
+        FN(SetText, RECEIVE_SET_TEXT)(uio, MR_ROW_SECOND, ROW_OBJECT, SEND_ALL_MR_TEXT);
+        const char *sell = FN(MsgLookup, MSG_TEXT)(GLOBAL(GOT_MESSAGES), MR_MSG_TABLE, MR_MSG_SELL);
+        if (sell && g_mr_row3) FN(SetText, RECEIVE_SET_TEXT)(uio, g_mr_row3, ROW_OBJECT, sell);
+    }
+}
+
+static u32 claim_hook(u32 ui) {
+    g_mr_frame = g_frame;
+    u8 state = *(u8 *)(ui + ALCHEMY_STATE), sub = *(u8 *)(ui + ALCHEMY_STATE + 1);
+    bool claiming = state == ALCHEMY_CLAIM, menu = claiming && sub == CLAIM_MENU;
+    u8 *cursor = (u8 *)(ui + ALCHEMY_CURSOR);
+    u32 pad = GLOBAL(GOT_PAD), *pressed = (u32 *)(pad + PAD_PRESSED), *repeat = (u32 *)(pad + PAD_REPEAT);
+    u32 was = *pressed, was_rep = *repeat;
+    if (g_send_all && claiming && sub == CLAIM_DONE && g_mr_sending) { // (all sent: Done)
+        cursor[CURSOR_ROW] = 1;
+        *pressed = *repeat = PAD_A;
+        g_mr_sending = false, g_one_sound_each = false;
+        forge_log(LOG_INFO, "field-qol: Meld Result: every Talisman sent, leaving");
+        u32 r = ORIGINAL(Is, g_claim_hook)(ui);
+        *pressed = was, *repeat = was_rep;
+        return r;
+    }
+    if (!g_send_all || !claiming || (sub != CLAIM_MENU && sub != CLAIM_GRID)) {
+        if (g_mr_sending) g_one_sound_each = false;
+        g_mr_sending = false, g_mr_last = 0xFFFFFFFF;
+        u32 r = ORIGINAL(Is, g_claim_hook)(ui);
+        u8 now = *(u8 *)(ui + ALCHEMY_STATE + 1); // (Sell's question and sale keep the rows, as the menu shows)
+        g_mr_active = g_send_all && *(u8 *)(ui + ALCHEMY_STATE) == ALCHEMY_CLAIM && now >= CLAIM_MENU && now <= CLAIM_LAST;
+        mr_layout(ui, g_mr_active);
+        return r;
+    }
+    u32 before = cursor[CURSOR_ROW];
+    if (menu && !g_mr_sending && (cursor[CURSOR_ROWS] == 2 || cursor[CURSOR_ROWS] == 3)) {
+        // the cursor given a third row (the mouse and the moves see three): Send 0, ours 1, Sell 2 (the game's 1)
+        if (cursor[CURSOR_ROWS] == 2) {
+            if (cursor[CURSOR_ROW] == 1) cursor[CURSOR_ROW] = 2;
+            cursor[CURSOR_ROWS] = 3, *(u16 *)(cursor + CURSOR_COUNT) = 3;
+        }
+        before = cursor[CURSOR_ROW];
+        if ((was & PAD_A) && before == 1) { // ours: the game's A on Send opens the grid, then the presses
+            g_mr_sending = true, g_mr_last = 0xFFFFFFFF;
+            g_one_sound_each = true, g_sounds = 0;
+            cursor[CURSOR_ROW] = 0, cursor[CURSOR_ROWS] = 2, *(u16 *)(cursor + CURSOR_COUNT) = 2;
+            forge_log(LOG_INFO, "field-qol: Meld Result: sending every Talisman to the Item Box");
+        } else if ((was & PAD_A) && before == 2) { // Sell: the game's row 1
+            cursor[CURSOR_ROW] = 1, cursor[CURSOR_ROWS] = 2, *(u16 *)(cursor + CURSOR_COUNT) = 2;
+        }
+        g_mr_cursor = cursor;
+    }
+    if (sub == CLAIM_GRID && g_mr_sending) {
+        u32 next = mr_next_cell(ui);
+        if (next == 0xFFFFFFFF) {
+            g_mr_sending = false, g_one_sound_each = false; // (the game shows its Done menu when it's empty)
+        } else if (next == g_mr_last) { // (not sent: the Item Box is full) back to the menu
+            g_mr_sending = false, g_one_sound_each = false;
+            *pressed = *repeat = PAD_B;
+            forge_log(LOG_INFO, "field-qol: Meld Result: the Item Box is full, back to the menu");
+        } else {
+            u8 *g = (u8 *)(ui + GRID_COL);
+            u32 per = (u32)g[2] * g[3], in = next % per;
+            *(u16 *)(ui + GRID_PAGE) = (u16)(next / per), g[1] = (u8)(in / g[2]), g[0] = (u8)(in % g[2]);
+            *pressed = *repeat = PAD_A;
+            g_mr_last = next;
+        }
+    }
+    u32 r = ORIGINAL(Is, g_claim_hook)(ui);
+    *pressed = was, *repeat = was_rep;
+    g_mr_cursor = 0;
+    u8 now = *(u8 *)(ui + ALCHEMY_STATE + 1);
+    // the game's B on Send goes to its last row, ours here: to Sell instead
+    if (now == CLAIM_MENU && (was & PAD_B) && before == 0 && cursor[CURSOR_ROW] == 1 && cursor[CURSOR_ROWS] == 3)
+        cursor[CURSOR_ROW] = 2;
+    g_mr_active = *(u8 *)(ui + ALCHEMY_STATE) == ALCHEMY_CLAIM && ((now >= CLAIM_MENU && now <= CLAIM_LAST) || g_mr_sending);
+    if (now == CLAIM_MENU) g_mr_row_shown = cursor[CURSOR_ROWS] == 3 ? cursor[CURSOR_ROW] : cursor[CURSOR_ROW] ? 2 : 0;
+    else if (g_mr_sending) g_mr_row_shown = 1;
+    mr_layout(ui, g_mr_active);
+    return r;
+}
+
 // The rows: the added one after Send, on a three-row menu with Send second (the reward screen's sections, Meownster
 // Hunters, Hunters for Hire) or the appraisal's two rows (Send to Boxes, Sell Items & Exit)
 static void rows_hook(u32 uio, u32 list, u32 flag) {
@@ -1499,17 +1709,17 @@ static bool meld_leftovers(u32 ui) {
 }
 
 // The button guide (bottom right; component 5 of the screen holding the help line): its first list, four entries
-// {button icon, text}, shows "Help" here; the plugin adds "Select leftovers" with Y's icon while the list is open
+// {button icon, text}, shows "Help" here; the plugin adds "Select Leftovers" with Y's icon while the list is open
 #define GUIDE_UIO_INDEX 5
 #define GUIDE_ADD 0x644C34        // the guide: add an entry to the first free of four (guide, icon, text) -> 1: added
 #define GUIDE_BUILD 0x6439EC      // the guide: lay it out again (guide, set, flags, 1)
 #define GUIDE_SET 0x4C            // its set and flags (for GUIDE_BUILD)
 #define GUIDE_FLAGS 0x50
 #define GUIDE_FIRST 0x228         // 4 x {u32 icon (-1: none), const char *text}
-#define ICON_Y 3                  // (icons: A 0, B 1, X 2, Y 3 ... + 14, - 15)
-static const char MELD_HINT[] = "Select leftovers";
+#define ICON_Y 0                  // (icons: buttonName indices: Y 0, X 1, B 2, A 3, L 4, R 5)
+static const char MELD_HINT[] = "Select Leftovers";
 static bool g_meld_hint;
-static u32 g_meld_frame, g_frame; // (g_frame: frames since the start, counted in forge_onUpdate)
+static u32 g_meld_frame;
 
 typedef u32 (*Build)(u32 guide, u32 set, u32 flags, u32 one);
 typedef u32 (*GuideAdd)(u32 guide, u32 icon, const char *text);
@@ -1519,27 +1729,106 @@ static u32 guide_uio(void) {
     return screen ? FN(Component, UI_COMPONENT)(screen, GUIDE_UIO_INDEX) : 0;
 }
 
-static void meld_hint(bool show) {
+// Adds text with a button's icon to the guide's first list, or takes it out again; returns show
+static bool guide_hint(const char *text, u32 icon, bool show) {
     u32 g = guide_uio();
-    if (!g) return;
+    if (!g) return false;
     bool there = false;
     for (u32 i = 0; i < 4; i++) {
         u32 *e = (u32 *)(g + GUIDE_FIRST + 8 * i);
-        if (e[1] != (u32)MELD_HINT) continue;
+        if (e[1] != (u32)text) continue;
         there = true;
         if (!show) e[0] = 0xFFFFFFFF, e[1] = 0;
     }
-    bool changed = show ? !there && FN(GuideAdd, GUIDE_ADD)(g, ICON_Y, MELD_HINT) : there;
+    bool changed = show ? !there && FN(GuideAdd, GUIDE_ADD)(g, icon, text) : there;
     if (changed) FN(Build, GUIDE_BUILD)(g, *(u32 *)(g + GUIDE_SET), *(u32 *)(g + GUIDE_FLAGS), 1);
-    g_meld_hint = show;
+    return show;
+}
+
+static void meld_hint(bool show) { g_meld_hint = guide_hint(MELD_HINT, ICON_Y, show); }
+
+// A notification in the game's message log, in the village too: a line of our own text (MESSAGE_TEXT, the way the
+// game posts a line that isn't in its message tables), in a box of its own. Such a line is red unless its text says
+// otherwise, so it's wrapped in white (NOTE_WHITE).
+#define MESSAGE_TEXT 0x65DDC4     // add a line of text to the message log (kind, 0x63, text, 0) -> -1 when it can't
+#define TEXT_LINE 0x63
+#define NOTE_WHITE "<COL FFFFFFFF>"
+typedef u32 (*MessageText)(u32 kind, u32 type, const char *text, u32 zero);
+
+static char *put(char *q, const char *s);
+static char *put_u(char *q, u32 v);
+
+static void notify(const char *text) {
+    FN(Query, MSG_BEGIN)();
+    FN(MessageText, MESSAGE_TEXT)(0, TEXT_LINE, text, 0);
+    FN(Query, MSG_END)();
 }
 
 static ForgeHook g_meld_hook;
+static bool g_meld_quiet; // (the picks' A presses play the game's select sound once)
+
+// Melding jackpot: an order's charms are rolled when it's placed (MELD_ROLL, by the order's kind). The game gives
+// Mystery, Luminous, Ancient and Fabled Melding 1 charm (Mystery, Shining, Timeworn, Enduring), Halcyon Melding 0-7
+// charms of those first three by its own roll, and Juju Melding 0-2 Enduring and 1-2 Timeworn by the talismans'
+// rarities. After the game's roll, the order's 7 entries (the most it holds) are all filled, made as the game makes
+// its own: 7 of the melding's charm; for Halcyon 7, each of a type rolled with the game's odds; for Juju 5 Enduring
+// and 2 Timeworn (as the well-known cheat 04000000 00196A9C E3A0A007 / 00196AA0 E3A09005 does).
+#define MELD_ROLL 0x196604        // roll an order's charms (pot, order)
+#define POT_ORDERS 10
+#define POT_ORDER 0x1F4           // an order's size: s8 kind at +0x103C, its charms in 7 entries at +0x10C4
+#define ORDER_KIND 0x103C
+#define ORDER_ENTRIES 0x10C4
+#define ORDER_CHARMS 7
+#define ENTRY_SIZE 0x34           // u32 state (2: holds a charm), u16 item at +4, the charm item (40 bytes) at +0xC
+#define ENTRY_FULL 2
+#define ENTRY_ID 4
+#define ENTRY_CHARM 0xC
+#define ITEM_MAKE 0x14BBA8        // make an item (out, items, id, 1): its 40 bytes at out+4
+#define ITEM_FREE 0xDAD24         // (out)
+#define GOT_ITEM_MAKER 0x183A834
+#define ITEM_MYSTERY 0x161        // then Shining, Timeworn, Enduring: kinds 0-3 give one of these
+#define ITEM_TIMEWORN 0x163
+#define ITEM_ENDURING 0x164
+#define KIND_HALCYON 4
+#define KIND_JUJU 5
+#define JUJU_ENDURING 5
+typedef void (*Roll)(u32 pot, u32 order);
+typedef void (*ItemMake)(u32 *out, u32 items, u32 id, u32 one);
+typedef void (*ItemFree)(u32 *item);
+static ForgeHook g_meld_roll_hook;
+static u32 g_seed = 0x9E3779B9;
+
+// Halcyon's odds: of 0-84, below 10 Mystery, below 55 Shining, else Timeworn
+static u32 halcyon_charm(void) {
+    g_seed ^= g_seed << 13, g_seed ^= g_seed >> 17, g_seed ^= g_seed << 5;
+    u32 v = (g_seed + g_frame) % 85;
+    return v < 10 ? ITEM_MYSTERY : v < 55 ? ITEM_MYSTERY + 1 : ITEM_TIMEWORN;
+}
+
+static void meld_roll_hook(u32 pot, u32 order) {
+    ORIGINAL(Roll, g_meld_roll_hook)(pot, order);
+    if (!g_meld_jackpot || order >= POT_ORDERS) return;
+    s8 kind = *(s8 *)(pot + order * POT_ORDER + ORDER_KIND);
+    if (kind < 0 || kind > KIND_JUJU) return;
+    u32 e = pot + order * POT_ORDER + ORDER_ENTRIES;
+    for (u32 i = 0; i < ORDER_CHARMS; i++, e += ENTRY_SIZE) {
+        u32 id = kind == KIND_JUJU ? (i < JUJU_ENDURING ? ITEM_ENDURING : ITEM_TIMEWORN)
+                 : kind == KIND_HALCYON ? halcyon_charm() : ITEM_MYSTERY + (u32)kind, item[11];
+        FN(ItemMake, ITEM_MAKE)(item, GLOBAL(GOT_ITEM_MAKER), id, 1);
+        *(u32 *)e = ENTRY_FULL;
+        memcpy((void *)(e + ENTRY_CHARM), item + 1, 40);
+        *(u16 *)(e + ENTRY_ID) = (u16)id;
+        FN(ItemFree, ITEM_FREE)(item);
+    }
+    forge_log(LOG_INFO, "field-qol: melding jackpot: order %u (kind %d) gives 7 charms", order, kind);
+}
 
 static u32 meld_hook(u32 ui) {
     bool list = *(u8 *)(ui + MELD_SUBSTATE) == MELD_LIST;
     g_meld_frame = g_frame;
     if (list != g_meld_hint || (list && !g_meld_leftovers) ) meld_hint(list && g_meld_leftovers);
+    if (g_meld_quiet && (!list || (!g_meld_restore && g_picks_next >= g_picks_left))) // (the picks are done)
+        g_meld_quiet = false, g_one_sound_each = false;
     if (!list) {
         g_picks_left = 0, g_meld_restore = false;
         return ORIGINAL(Is, g_meld_hook)(ui);
@@ -1562,10 +1851,171 @@ static u32 meld_hook(u32 ui) {
         FN(Method, MELD_DRAW_DETAIL)(ui);
         *(u32 *)(ui + MELD_REDRAW) |= 0x80;
     } else if (g_meld_leftovers && (was & PAD_Y)) {
+        u32 need = MELD_NEEDED - *(u32 *)(ui + MELD_COUNT);
         if (!meld_leftovers(ui)) FN(Sound, UI_SOUND)(0, SOUND_FULL);
+        else g_meld_quiet = true, g_one_sound_each = true, g_sounds = 0; // (one select sound for all the picks)
+        if (need <= MELD_NEEDED && g_picks_left < need) { // (too few: a notification says so)
+            static char line[80];
+            char *q = put(line, NOTE_WHITE);
+            q = g_picks_left ? put(put_u(put(q, "Only "), g_picks_left),
+                                   g_picks_left == 1 ? " leftover Talisman found." : " leftover Talismans found.")
+                             : put(q, "No leftover Talismans found.");
+            q = put(q, "</COL>");
+            *q = 0;
+            notify(line);
+        }
         *pressed = was & ~PAD_Y;
     }
     u32 r = ORIGINAL(Is, g_meld_hook)(ui);
+    *pressed = was;
+    return r;
+}
+
+// ================================================================== View Talismans: R+ZL sells the leftovers
+//
+// Item Box > Manage Equipment > View Talismans (TAL_UPDATE, every frame; state +0x88: 0 the list, 3 the sale question,
+// 4 sold). The game's sell button (TAL_SELL_BUTTON: R, or ZR in another button layout) asks "The total comes to Nz."
+// for the Talisman under the cursor; Yes sells it (EQUIP_SELL, the zenny added with MONEY_ADD) and lays the list out
+// again from the box (the list's order: TAL_ORDER, a box index per position). With R held, ZL collects the leftovers (as Meld leftovers chooses them, and never the worn one, one in a saved set, or one
+// with Decorations attached) and opens the same question with their count and total. Yes sells all of them but one,
+// then points the cursor's position at the last one, so the game's own Yes sells it and lays the list out again.
+// The sell button acts when it's let go, so that R+ZL doesn't also ask about the Talisman under the cursor.
+#define TAL_UPDATE 0x720FF8       // the View Talismans screen, every frame (ui)
+#define TAL_STATE 0x88
+#define TAL_LIST 0
+#define TAL_QUESTION 3
+#define TAL_SOLD 4
+#define TAL_CURSOR 0x24C          // the list's cursor (row +0xD, rows per page +0xE, page +0x10)
+#define TAL_ASK 0x6C              // (u8) the question's Yes/No cursor
+#define TAL_SELL_BUTTON 0x65F914  // the game's sell button -> its pad bit
+#define TAL_ORDER 0x3A1CC         // equipment box: u16 box index of each position of the list (8 bytes each)
+#define TAL_ORDER_MAX 2000
+#define EQUIP_PRICE 0x1437E0      // equipment box: an entry's sale price (box, 0, index) -> zenny, -1: none
+#define EQUIP_SELL 0x143390       // equipment box: sell an entry (box, 0, index) -> zenny (its sets forget it)
+#define EQUIP_WORN 0x1444B4       // equipment box: worn (box, 0, index) -> non-zero
+#define EQUIP_IN_SET 0x148340     // equipment box: the first saved set using it (box, 0, index) -> 0xFF: none
+#define EQUIP_DECORATED 0x144F28  // equipment box: Decorations attached (box, index) -> non-zero
+#define MONEY_ADD 0x523150        // add zenny (the GOT_MONEY object, amount)
+#define GOT_MONEY 0x1838D88
+#define PAD_HELD 0x6BF4           // the buttons held this frame
+#define TAL_MODE 0x84
+#define TAL_PANEL 0x65CC0C        // (ui, 3): as the game's question does in modes 4 and 5
+#define CURSOR_ACTIVATE 0x54ECC0  // a cursor: (cursor, 1) while a question is up, 0 after
+#define SOUND_ASK 0x15
+#define PAD_ZL 0x400
+#define ICON_R 5
+// The guide's "Sell Talisman" says ZL's too: the guide's second list names its entries by button-name message (set 17,
+// View Talismans: 0x57 "Sell Talisman"), and looks each text up (MSG_TEXT) when it's laid out. While the list is up,
+// that lookup gives the plugin's text, and the guide is laid out again when that starts and ends.
+#define BUTTON_TABLE 0x12
+#define BUTTON_SELL 0x57
+static const char SELL_HINT[] = "Sell (ZL: Leftovers)";
+static bool g_sell_hint;
+
+static ForgeHook g_msg_hook;
+
+static const char *msg_hook(u32 manager, u32 table, u32 number) {
+    if (g_sell_hint && table == BUTTON_TABLE && number == BUTTON_SELL) return SELL_HINT;
+    return ORIGINAL(MsgLookup, g_msg_hook)(manager, table, number);
+}
+
+static void sell_hint(bool show) {
+    g_sell_hint = show;
+    u32 g = guide_uio();
+    if (g) FN(Build, GUIDE_BUILD)(g, *(u32 *)(g + GUIDE_SET), *(u32 *)(g + GUIDE_FLAGS), 1);
+}
+#define SELL_TABLE 0x16           // the question's message: 0x7C, or 0x90 with Decorations attached
+#define SELL_MSG 0x7C
+#define SELL_MSG_DECO 0x90
+
+typedef u32 (*Box3)(u32 box, u32 zero, u32 index);
+typedef u32 (*Box2)(u32 box, u32 index);
+typedef u32 (*Button)(void);
+typedef void (*AddMoney)(u32 money, s32 amount);
+typedef void (*Activate)(u32 cursor, u32 on);
+
+static ForgeHook g_tal_hook;
+static u16 g_sell[EQUIP_SLOTS];
+static u32 g_sell_count, g_sell_total, g_tal_frame;
+static bool g_sell_held;
+
+// The leftovers that can be sold: dominated (as for melding), not worn, in no saved set, no Decorations, with a price
+static void sell_collect(void) {
+    u32 box = GLOBAL(GOT_EQUIP_BOX);
+    read_charms();
+    g_sell_count = g_sell_total = 0;
+    for (u32 k = 0; k < g_charm_count; k++) {
+        u32 bi = g_charms[k];
+        bool left = false;
+        for (u32 j = 0; j < g_charm_count && !left; j++)
+            if (j != k && dominates(&g_charm[g_charms[j]], g_charms[j], &g_charm[bi], bi)) left = true;
+        if (!left || FN(Box3, EQUIP_WORN)(box, 0, bi) || (FN(Box3, EQUIP_IN_SET)(box, 0, bi) & 0xFF) != 0xFF ||
+            FN(Box2, EQUIP_DECORATED)(box, bi))
+            continue;
+        s32 price = (s32)FN(Box3, EQUIP_PRICE)(box, 0, bi);
+        if (price < 0) continue;
+        g_sell[g_sell_count++] = (u16)bi;
+        g_sell_total += (u32)price;
+    }
+}
+
+static u32 tal_hook(u32 ui) {
+    u32 pad = GLOBAL(GOT_PAD), *pressed = (u32 *)(pad + PAD_PRESSED), was = *pressed;
+    u32 held = *(u32 *)(pad + PAD_HELD), sell = FN(Button, TAL_SELL_BUTTON)();
+    u32 state = *(u32 *)(ui + TAL_STATE);
+    if (g_frame - g_tal_frame > 2) g_sell_held = false, g_sell_asking = false; // (the screen was opened again)
+    g_tal_frame = g_frame;
+    bool hint = g_meld_leftovers && state == TAL_LIST;
+    if (hint != g_sell_hint) sell_hint(hint);
+    if (!g_meld_leftovers || (state != TAL_LIST && !g_sell_asking)) {
+        g_sell_held = false;
+        return ORIGINAL(Is, g_tal_hook)(ui);
+    }
+    if (state == TAL_LIST) {
+        g_sell_asking = false;
+        if (was & sell) g_sell_held = true, *pressed &= ~sell; // (decided when it's let go, or by ZL)
+        if (g_sell_held && (was & PAD_ZL)) {
+            g_sell_held = false;
+            *pressed &= ~PAD_ZL;
+            sell_collect();
+            if (!g_sell_count) {
+                FN(Sound, UI_SOUND)(0, SOUND_FULL);
+                notify(NOTE_WHITE "No leftover Talismans to sell.</COL>");
+            } else {
+                char *q = put(put_u(put(g_sell_text, "Sell "), g_sell_count),
+                              g_sell_count == 1 ? " leftover Talisman?" : " leftover Talismans?");
+                q = put(put_u(put(q, "\r\nThe total comes to "), g_sell_total), "z.");
+                *q = 0;
+                g_sell_asking = true;
+                forge_log(LOG_INFO, "field-qol: talismans: %u leftovers for %uz, asking", g_sell_count, g_sell_total);
+                // the game's question, as its sell button opens it (it takes the Talisman under the cursor for its
+                // text, which the plugin replaces)
+                *(u8 *)(ui + TAL_ASK) = 1;
+                *(u32 *)(ui + TAL_STATE) = TAL_QUESTION;
+                u32 mode = *(u32 *)(ui + TAL_MODE);
+                if (mode == 4 || mode == 5) FN(Method4, TAL_PANEL)(ui, 3, 0, 0);
+                FN(Sound, UI_SOUND)(0, SOUND_ASK);
+                FN(Activate, CURSOR_ACTIVATE)(ui + TAL_CURSOR, 1);
+                FN(Activate, CURSOR_ACTIVATE)(ui + 0x198, 1);
+                FN(Activate, CURSOR_ACTIVATE)(ui + 0x1BC, 1);
+            }
+        } else if (g_sell_held && !(held & sell)) {
+            g_sell_held = false;
+            *pressed |= sell; // (let go without ZL: the game's own sale of the Talisman under the cursor)
+        }
+    } else if (state == TAL_SOLD && g_sell_asking) {
+        // Yes: all but one sold here, the last by the game at the cursor's position
+        g_sell_asking = false;
+        u32 box = GLOBAL(GOT_EQUIP_BOX), money = GLOBAL(GOT_MONEY), got = 0;
+        u8 *cursor = (u8 *)(ui + TAL_CURSOR);
+        u32 pos = (u32)*(u16 *)(cursor + CURSOR_PAGE) * cursor[CURSOR_ROWS] + cursor[CURSOR_ROW];
+        for (u32 i = 0; i + 1 < g_sell_count; i++) got += FN(Box3, EQUIP_SELL)(box, 0, g_sell[i]);
+        if (got) FN(AddMoney, MONEY_ADD)(money, (s32)got);
+        if (pos < TAL_ORDER_MAX) *(u16 *)(box + TAL_ORDER + pos * 8) = g_sell[g_sell_count - 1];
+        forge_log(LOG_INFO, "field-qol: talismans: sold %u leftovers for %uz, the last one by the game",
+                  g_sell_count - 1, got);
+    }
+    u32 r = ORIGINAL(Is, g_tal_hook)(ui);
     *pressed = was;
     return r;
 }
@@ -1663,11 +2113,13 @@ static const Setting SETTINGS[] = {
     {"one_notification", "One notification", "One notification for the whole spot.", &g_one_box, true},
     {"full_pouch", "Replacement prompt last", "Gather everything, then ask what to replace.", &g_roll_all, true},
     {"deliver_anywhere", "Deliver anywhere", "Item Pouch Deliver works away from camp.", &g_deliver_anywhere, true},
-    {"send_all", "Send all to box", "Adds \"Send all to the Item Box & Exit\".", &g_send_all, true},
-    {"meld_leftovers", "Meld leftovers (Y)", "Y on the melding talisman list chooses\r\ntalismans you own better ones of.",
-     &g_meld_leftovers, true},
     {"auto_sort", "Auto-sort Item Pouch", "Sorts the Item Pouch whenever items are\r\nadded to it, as its Sort does.",
      &g_auto_sort, false},
+    {"send_all", "Send all to box", "Adds \"Send all to the Item Box & Exit\".", &g_send_all, true},
+    {"meld_leftovers", "Talisman management", "Leftover Talismans: Y on the melding\r\nlist chooses them. In View Talismans,\r\nhold R, then press ZL to sell them.",
+     &g_meld_leftovers, true},
+    {"meld_jackpot", "Melding jackpot", "Every melding gives 7 charms, the most\r\nan order holds.",
+     &g_meld_jackpot, false},
 };
 #define SETTING_COUNT ((u32)(sizeof SETTINGS / sizeof *SETTINGS))
 
@@ -1902,9 +2354,18 @@ EXPORT void forge_onInit(void) {
     if (g_rewards_hooked && !(hook(&g_appraisal_help_hook, APPRAISAL_HELP, appraisal_help_hook) &&
                               hook(&g_appraisal_hook, APPRAISAL_UPDATE, appraisal_hook)))
         forge_log(LOG_WARN, "field-qol: the appraisal hook FAILED, no Send all there");
-    // Melding: Y chooses leftover talismans
+    // Melding: Y chooses leftover talismans (and says so when there are too few)
     if (!hook(&g_meld_hook, MELD_UPDATE, meld_hook))
         forge_log(LOG_WARN, "field-qol: the melding hook FAILED, no leftover talismans with Y");
+    if (drawn && !(hook(&g_claim_hook, CLAIM_UPDATE, claim_hook) &&
+                   hook(&g_receive_draw_hook, RECEIVE_DRAW, receive_draw_hook)))
+        forge_log(LOG_WARN, "field-qol: the Meld Result hook FAILED, no Send all there");
+    if (drawn && !hook(&g_msg_hook, MSG_TEXT, msg_hook))
+        forge_log(LOG_WARN, "field-qol: the message hook FAILED, the guide shows only Sell Talisman");
+    if (drawn && !hook(&g_tal_hook, TAL_UPDATE, tal_hook))
+        forge_log(LOG_WARN, "field-qol: the View Talismans hook FAILED, no selling leftovers with R+ZL");
+    if (!hook(&g_meld_roll_hook, MELD_ROLL, meld_roll_hook))
+        forge_log(LOG_WARN, "field-qol: the melding roll hook FAILED, no melding jackpot");
     // Auto-sort: the screens it waits for
     if (!(hook(&g_item_box_hook, ITEM_BOX_UPDATE, item_box_hook) & hook(&g_supply_box_hook, SUPPLY_BOX_UPDATE, supply_box_hook) &
           hook(&g_share_box_hook, SHARE_BOX_UPDATE, share_box_hook)))
@@ -1927,6 +2388,7 @@ EXPORT void forge_onUpdate(float dt) {
     (void)dt;
     if (g_main) g_frame++, auto_sort_update();
     if (g_meld_hint && g_frame - g_meld_frame > 2) meld_hint(false); // (the melding screen closed)
+    if (g_sell_hint && g_frame - g_tal_frame > 2) sell_hint(false); // (View Talismans closed)
     g_since_r = forge_input_isDown(BUTTON_R) ? 0 : g_since_r + (g_since_r <= SINGLE_FRAMES);
     settings_update();
     if (g_main) prompt_next();
@@ -1977,15 +2439,17 @@ EXPORT void forge_onImGuiRender(void) {
     igCheckbox("Deliver from the Item Pouch anywhere", &g_deliver_anywhere);
     igTextUnformatted("Deliver and Clear out Account Items, for what the game allows.", NULL);
 
-    igTextUnformatted("Melding", NULL);
-    igCheckbox("Y on the talisman list: choose leftover talismans", &g_meld_leftovers);
-
     igTextUnformatted("Item Pouch", NULL);
     igCheckbox("Auto-sort the Item Pouch when items are added (off by default)", &g_auto_sort);
 
     igTextUnformatted("Rewards", NULL);
     if (!g_rewards_hooked) igTextUnformatted("Hook failed: no Send all (see log.txt).", NULL);
     igCheckbox("\"Send all to the Item Box & Exit\" on the reward screen", &g_send_all);
+
+    igTextUnformatted("Talismans", NULL);
+    igCheckbox("Talisman management: Y on the melding list chooses leftover Talismans; in View Talismans, hold R, then press ZL to sell them",
+               &g_meld_leftovers);
+    igCheckbox("Melding jackpot: every melding gives 7 charms (off by default)", &g_meld_jackpot);
 
     igTextUnformatted("Saved to fieldqol.ini next to your save. With Purple-lib: Options > Mod Options.", NULL);
     igTreePop();
